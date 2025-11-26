@@ -28,6 +28,25 @@ npm install
 npm link
 ```
 
+## Claude Code Plugin
+
+Use agent-council as a Claude Code plugin for seamless integration:
+
+```bash
+# Step 1: Install CLI globally
+npm install -g agent-council
+
+# Step 2: Add marketplace (in Claude Code)
+/plugin marketplace add mylukin/agent-council
+
+# Step 3: Install plugin
+/plugin install agent-council
+```
+
+The plugin provides:
+- **council** agent: Invoke with complex architectural decisions
+- **council-decision** skill: Auto-triggered for design trade-offs
+
 ## Prerequisites
 
 The following CLI tools must be installed and configured:

@@ -1,0 +1,15 @@
+{
+  "name": "agent-council",
+  "owner": "mylukin",
+  "version": "1.0.0",
+  "description": "Multi-model AI council plugins for Claude Code",
+  "plugins": [
+    {
+      "name": "agent-council",
+      "source": "./plugins/agent-council",
+      "description": "Multi-model AI council for consensus-driven decisions using Claude, Codex, and Gemini",
+      "agents": ["./agents/council.md"],
+      "skills": ["./skills/council-decision"]
+    }
+  ]
+}
