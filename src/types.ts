@@ -24,3 +24,16 @@ export type Stage2Result = { agent: string; rankingRaw: string; parsedRanking: s
 export type Stage3Result = { agent: string; response: string };
 
 export type LabelMap = Record<string, string>;
+
+export type ConversationEntry = {
+  question: string;
+  stage1: Stage1Result[];
+  stage3Response: string;
+};
+
+export type SessionState = {
+  history: ConversationEntry[];
+  agents: AgentConfig[];
+  chairman: AgentConfig;
+  timeoutMs?: number;
+};

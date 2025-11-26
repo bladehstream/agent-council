@@ -1,4 +1,22 @@
-import type { Stage1Result, Stage2Result } from "./types.js";
+import type { ConversationEntry, Stage1Result, Stage2Result } from "./types.js";
+
+const MAX_HISTORY_ENTRIES = 5;
+
+export function buildQuestionWithHistory(
+  question: string,
+  history: ConversationEntry[]
+): string {
+  if (history.length === 0) return question;
+
+  const recentHistory = history.slice(-MAX_HISTORY_ENTRIES);
+  let context = "Previous conversation:\n";
+  for (const entry of recentHistory) {
+    context += `Q: ${entry.question}\n`;
+    context += `A: ${entry.stage3Response}\n\n`;
+  }
+  context += `Current question: ${question}`;
+  return context;
+}
 
 export function buildRankingPrompt(userQuery: string, stage1Results: Stage1Result[]): string {
   const labels = stage1Results.map((_, idx) => String.fromCharCode(65 + idx));

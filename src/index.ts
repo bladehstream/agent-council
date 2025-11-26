@@ -1,27 +1,18 @@
+#!/usr/bin/env node
 import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 import chalk from "chalk";
-import { DEFAULT_AGENTS, filterAvailableAgents, runAgentsInteractive } from "./agents.js";
-import { buildRankingPrompt } from "./prompts.js";
-import {
-  abortIfNoStage1,
-  calculateAggregateRankings,
-  extractStage1,
-  extractStage2,
-  pickChairman,
-  printFinal,
-  runChairman,
-} from "./pipeline.js";
-import type { LabelMap } from "./types.js";
+import { DEFAULT_AGENTS, filterAvailableAgents } from "./agents.js";
+import { pickChairman, printFinal, runCouncilPipeline } from "./pipeline.js";
+import { startRepl } from "./repl.js";
 
 function buildArgs() {
   return yargs(hideBin(process.argv))
-    .scriptName("llm-local-council")
-    .usage("$0 <question> [options]")
+    .scriptName("agent-council")
+    .usage("$0 [question] [options]")
     .positional("question", {
-      describe: "The question to send to the council",
+      describe: "The question to send to the council (omit to enter interactive mode)",
       type: "string",
-      demandOption: true,
     })
     .option("chairman", {
       type: "string",
@@ -29,7 +20,7 @@ function buildArgs() {
     })
     .option("timeout", {
       type: "number",
-      default: 300,
+      default: 0,
       describe: "Per-agent timeout in seconds (0 means no timeout)",
     })
     .option("json", {
@@ -42,7 +33,7 @@ function buildArgs() {
 
 async function main() {
   const argv = await buildArgs().parseAsync();
-  const question = argv._[0]?.toString() || (argv as any).question;
+  const question = argv._[0]?.toString();
   const timeoutMs = argv.timeout && argv.timeout > 0 ? argv.timeout * 1000 : undefined;
 
   // Filter agents based on command availability
@@ -65,46 +56,29 @@ async function main() {
     console.log(chalk.yellow(`Warning: Only ${available.length} agent available. Council works best with multiple agents.\n`));
   }
 
-  const agents = available;
-  const chairman = pickChairman(agents, argv.chairman);
+  const chairman = pickChairman(available, argv.chairman);
   const useTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
-  const stage1States = await runAgentsInteractive("Stage 1 - Individual Responses", question, agents, timeoutMs, {
+  // If no question provided, enter REPL mode
+  if (!question) {
+    await startRepl(available, chairman);
+    return;
+  }
+
+  // Single-run mode (backwards compatible)
+  const result = await runCouncilPipeline(question, available, chairman, {
+    timeoutMs,
     tty: useTty,
   });
-  const stage1 = extractStage1(stage1States);
-  if (abortIfNoStage1(stage1)) return;
 
-  const labels = stage1.map((_, idx) => `Response ${String.fromCharCode(65 + idx)}`);
-  const labelToAgent: LabelMap = {};
-  labels.forEach((label, idx) => {
-    labelToAgent[label] = stage1[idx].agent;
-  });
-
-  const rankingPrompt = buildRankingPrompt(question, stage1);
-  const stage2States = await runAgentsInteractive("Stage 2 - Peer Rankings", rankingPrompt, agents, timeoutMs, {
-    tty: useTty,
-  });
-  const stage2 = extractStage2(stage2States);
-
-  const aggregate = calculateAggregateRankings(stage2, labelToAgent);
-  const stage3 = await runChairman(question, stage1, stage2, chairman, timeoutMs);
+  if (!result) {
+    process.exit(1);
+  }
 
   if (argv.json) {
-    console.log(
-      JSON.stringify(
-        {
-          stage1,
-          stage2,
-          aggregate,
-          stage3,
-        },
-        null,
-        2
-      )
-    );
+    console.log(JSON.stringify(result, null, 2));
   } else {
-    printFinal(stage1, stage2, aggregate, stage3);
+    printFinal(result.stage1, result.stage2, result.aggregate, result.stage3);
   }
 }
 

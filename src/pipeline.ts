@@ -1,6 +1,6 @@
 import chalk from "chalk";
-import { buildChairmanPrompt, parseRankingFromText } from "./prompts.js";
-import { callAgent, DEFAULT_CHAIRMAN } from "./agents.js";
+import { buildChairmanPrompt, buildRankingPrompt, parseRankingFromText } from "./prompts.js";
+import { callAgent, DEFAULT_CHAIRMAN, runAgentsInteractive } from "./agents.js";
 import type {
   AgentConfig,
   AgentState,
@@ -9,6 +9,63 @@ import type {
   Stage2Result,
   Stage3Result,
 } from "./types.js";
+
+export type PipelineResult = {
+  stage1: Stage1Result[];
+  stage2: Stage2Result[];
+  stage3: Stage3Result;
+  aggregate: Array<{ agent: string; averageRank: number; rankingsCount: number }>;
+};
+
+export async function runCouncilPipeline(
+  question: string,
+  agents: AgentConfig[],
+  chairman: AgentConfig,
+  options: { timeoutMs?: number; tty: boolean }
+): Promise<PipelineResult | null> {
+  const { timeoutMs, tty } = options;
+
+  // Stage 1: Individual Responses
+  const stage1States = await runAgentsInteractive(
+    "Stage 1 - Individual Responses",
+    question,
+    agents,
+    timeoutMs,
+    { tty }
+  );
+  const stage1 = extractStage1(stage1States);
+
+  if (stage1.length === 0) {
+    console.log(chalk.red("No agent responses were completed; aborting."));
+    return null;
+  }
+
+  // Build label map for Stage 2
+  const labels = stage1.map((_, idx) => `Response ${String.fromCharCode(65 + idx)}`);
+  const labelToAgent: LabelMap = {};
+  labels.forEach((label, idx) => {
+    labelToAgent[label] = stage1[idx].agent;
+  });
+
+  // Stage 2: Peer Rankings
+  const rankingPrompt = buildRankingPrompt(question, stage1);
+  const stage2States = await runAgentsInteractive(
+    "Stage 2 - Peer Rankings",
+    rankingPrompt,
+    agents,
+    timeoutMs,
+    { tty }
+  );
+  const stage2 = extractStage2(stage2States);
+
+  // Calculate aggregate rankings
+  const aggregate = calculateAggregateRankings(stage2, labelToAgent);
+
+  // Stage 3: Chairman Synthesis
+  const stage3 = await runChairman(question, stage1, stage2, chairman, timeoutMs);
+
+  return { stage1, stage2, stage3, aggregate };
+}
 
 export function extractStage1(results: AgentState[]): Stage1Result[] {
   return results
