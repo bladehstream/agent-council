@@ -41,8 +41,8 @@ export function filterAvailableAgents(agents: AgentConfig[]): FilterResult {
 export const DEFAULT_AGENTS: AgentConfig[] = [
   // Codex: non-interactive exec mode, prompt as positional arg.
   { name: "codex", command: ["codex", "exec", "--skip-git-repo-check"], promptViaStdin: false },
-  // Claude: --print for non-interactive single response, text output format.
-  { name: "claude", command: ["claude", "--print", "--output-format", "text"], promptViaStdin: true },
+  // Claude: --print for non-interactive single response, text output format, web search enabled.
+  { name: "claude", command: ["claude", "--print", "--output-format", "text", "--allowedTools", "WebSearch"], promptViaStdin: true },
   // Gemini: non-interactive text output, prompt as positional arg.
   { name: "gemini", command: ["gemini", "--output-format", "text"], promptViaStdin: false },
 ];
