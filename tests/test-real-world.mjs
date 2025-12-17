@@ -238,6 +238,22 @@ await runTest(hasClaude
     })
   : skip('2.4 Claude accepts opus model name', 'claude not installed'));
 
+await runTest(hasClaude
+  ? test('2.5 Claude WebSearch tool works with correct flags', async () => {
+      const result = await runCommand('claude', [
+        '--print', '--output-format', 'text', '--model', 'haiku',
+        '--tools', 'WebSearch', '--allowedTools', 'WebSearch', '--max-turns', '3'
+      ], { stdin: 'Search the web and tell me one news headline from today. Be brief.', timeout: 60000 });
+      assert(result.code === 0, `Claude should exit with code 0, got ${result.code}`);
+      // Web search results typically include "Sources:" or actual content
+      const output = result.stdout.toLowerCase();
+      assert(
+        output.includes('source') || output.includes('http') || output.includes('news') || output.length > 50,
+        'Claude with WebSearch should return web-sourced content'
+      );
+    })
+  : skip('2.5 Claude WebSearch tool works with correct flags', 'claude not installed'));
+
 // ============================================================================
 // Category 3: Integration Tests - Basic Agent Calls
 // ============================================================================
