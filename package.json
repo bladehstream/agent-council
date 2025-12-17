@@ -48,7 +48,8 @@
     "test:unit": "node tests/test-runner.mjs",
     "test:config": "node tests/test-model-config.mjs",
     "test:pipeline": "node tests/test-pipeline.mjs",
-    "test:all": "node tests/test-runner.mjs && node tests/test-model-config.mjs && node tests/test-pipeline.mjs",
+    "test:real-world": "node tests/test-real-world.mjs",
+    "test:all": "node tests/test-runner.mjs && node tests/test-model-config.mjs && node tests/test-pipeline.mjs && node tests/test-real-world.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
