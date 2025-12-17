@@ -1,105 +1,289 @@
 # Agent Council
 
-[中文文档](./README.zh-CN.md)
+A multi-agent AI consensus engine that orchestrates Claude, Codex, and Gemini to provide collaborative, cross-validated answers through a three-stage deliberation process.
 
-A multi-model AI council CLI that provides consensus-driven decisions using Claude, Codex, and Gemini.
+This fork adds a **programmatic API** for integration into larger automation workflows.
+
+## Features
+
+- **Multi-Agent Consensus**: Combines responses from multiple AI models for more reliable answers
+- **Peer Validation**: Agents anonymously rank each other's responses to surface quality
+- **Chairman Synthesis**: A designated agent synthesizes the final answer from all inputs
+- **Programmatic API**: Full library exports for embedding in applications
+- **Stage Callbacks**: Hook into pipeline stages for progress tracking and checkpointing
+- **Silent Mode**: Suppress console output for clean programmatic usage
+- **Custom Agents**: Add any CLI-based AI tool as a council member
 
 ## How It Works
 
-```text
-Stage 1: Individual Responses
-  All agents answer the question in parallel
-
-Stage 2: Peer Rankings
-  Each agent evaluates and ranks all responses
-
-Stage 3: Chairman Synthesis
-  A designated agent synthesizes the final answer based on all responses and rankings
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         AGENT COUNCIL                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Stage 1: Individual Responses (Parallel)                       │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐                         │
+│  │  Codex  │  │ Claude  │  │ Gemini  │                         │
+│  └────┬────┘  └────┬────┘  └────┬────┘                         │
+│       │            │            │                               │
+│       ▼            ▼            ▼                               │
+│  Stage 2: Peer Rankings (Parallel, Anonymized)                  │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐                         │
+│  │ Rank:   │  │ Rank:   │  │ Rank:   │                         │
+│  │ B > A > C│  │ A > B > C│  │ B > A > C│                       │
+│  └────┬────┘  └────┬────┘  └────┬────┘                         │
+│       │            │            │                               │
+│       └────────────┼────────────┘                               │
+│                    ▼                                            │
+│  Stage 3: Chairman Synthesis                                    │
+│  ┌─────────────────────────────────────┐                       │
+│  │  Chairman (Gemini) synthesizes      │                       │
+│  │  final answer from all responses    │                       │
+│  │  and peer rankings                  │                       │
+│  └─────────────────────────────────────┘                       │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Installation
 
-```bash
-# Install globally from npm
-npm install -g agent-council
+### From Source
 
-# Or clone and build locally
-git clone https://github.com/mylukin/agent-council.git
-cd agent-council
+```bash
+git clone https://github.com/bladehstream/agent-council-testing.git
+cd agent-council-testing
 npm install
-npm link
+npm run build
 ```
 
-## Claude Code Plugin
+### Prerequisites
 
-Use agent-council as a Claude Code plugin for seamless integration:
+At least 2 of the following AI CLI tools must be installed and authenticated:
+
+| Tool | Installation | Authentication |
+|------|-------------|----------------|
+| Claude | `npm install -g @anthropic-ai/claude-code` | `claude auth` |
+| Codex | `npm install -g @openai/codex` | `codex auth` |
+| Gemini | `npm install -g @google/gemini-cli` | `gemini auth` |
+
+Verify your setup:
+```bash
+node -e "import('./dist/lib.js').then(({filterAvailableAgents, DEFAULT_AGENTS}) => {
+  const {available} = filterAvailableAgents(DEFAULT_AGENTS);
+  console.log('Available:', available.map(a => a.name).join(', '));
+})"
+```
+
+## Quick Start
+
+### CLI Usage
 
 ```bash
-# Step 1: Install CLI globally
-npm install -g agent-council
+# Single question
+./dist/index.js "What's the best database for real-time analytics?"
 
-# Step 2: Add marketplace (in Claude Code)
-/plugin marketplace add mylukin/agent-council
+# With JSON output
+./dist/index.js "Explain microservices" --json
 
-# Step 3: Install plugin
-/plugin install agent-council
+# With timeout (seconds per agent)
+./dist/index.js "Complex question" --timeout 120
+
+# Specify chairman
+./dist/index.js "Question" --chairman claude
+
+# Interactive REPL mode
+./dist/index.js
 ```
 
-The plugin provides:
-- **council** agent: Invoke with complex architectural decisions
-- **council-decision** skill: Auto-triggered for design trade-offs
+### Programmatic Usage
 
-## Prerequisites
+```typescript
+import {
+  runCouncilPipeline,
+  filterAvailableAgents,
+  pickChairman,
+  DEFAULT_AGENTS,
+} from 'agent-council';
 
-The following CLI tools must be installed and configured:
+// Check available agents
+const { available } = filterAvailableAgents(DEFAULT_AGENTS);
+const chairman = pickChairman(available);
 
-- [Claude Code](https://github.com/anthropics/claude-code) (`claude`)
-- [Codex CLI](https://github.com/openai/codex) (`codex`)
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`)
+// Run the council
+const result = await runCouncilPipeline(
+  "What's the best approach for authentication?",
+  available,
+  chairman,
+  { tty: false, silent: true }
+);
 
-At least one agent must be available. The council works best with multiple agents.
+if (result) {
+  console.log('Final answer:', result.stage3.response);
+  console.log('Aggregate ranking:', result.aggregate);
+}
+```
 
-## Usage
+## Programmatic API
 
-### REPL Mode (Interactive)
+### Core Exports
+
+```typescript
+// Pipeline
+runCouncilPipeline(question, agents, chairman, options)
+pickChairman(agents, preferredName?)
+extractStage1(agentStates)
+extractStage2(agentStates)
+calculateAggregateRankings(stage2Results, labelMap)
+runChairman(query, stage1, stage2, chairman, timeoutMs, silent?)
+
+// Agents
+filterAvailableAgents(agents)  // Returns { available, unavailable }
+callAgent(state, prompt, timeoutMs)
+commandExists(command)
+DEFAULT_AGENTS
+DEFAULT_CHAIRMAN
+
+// Prompts
+buildQuestionWithHistory(question, history)
+buildRankingPrompt(query, stage1Results)
+buildChairmanPrompt(query, stage1, stage2)
+parseRankingFromText(text)
+MAX_HISTORY_ENTRIES
+
+// Types
+AgentConfig, AgentState, AgentStatus
+Stage1Result, Stage2Result, Stage3Result
+PipelineResult, PipelineOptions, PipelineCallbacks
+FilterResult, ConversationEntry, SessionState
+```
+
+### Pipeline Options
+
+```typescript
+interface PipelineOptions {
+  tty: boolean;              // Enable interactive TTY rendering
+  silent?: boolean;          // Suppress console output (default: false)
+  timeoutMs?: number;        // Per-agent timeout in milliseconds
+  callbacks?: PipelineCallbacks;
+}
+
+interface PipelineCallbacks {
+  onStage1Complete?: (results: Stage1Result[]) => void | Promise<void>;
+  onStage2Complete?: (results: Stage2Result[], aggregate: AggregateRanking[]) => void | Promise<void>;
+  onStage3Complete?: (result: Stage3Result) => void | Promise<void>;
+}
+```
+
+### Stage Callbacks
+
+Use callbacks for progress tracking, logging, or checkpointing:
+
+```typescript
+const result = await runCouncilPipeline(question, agents, chairman, {
+  tty: false,
+  silent: true,
+  callbacks: {
+    onStage1Complete: (results) => {
+      console.log(`Got ${results.length} individual responses`);
+    },
+    onStage2Complete: async (rankings, aggregate) => {
+      console.log(`Top ranked: ${aggregate[0]?.agent}`);
+      await saveCheckpoint({ rankings, aggregate });
+    },
+    onStage3Complete: (result) => {
+      console.log(`Chairman ${result.agent} completed synthesis`);
+    },
+  },
+});
+```
+
+### Conversation History
+
+```typescript
+import { buildQuestionWithHistory, type ConversationEntry } from 'agent-council';
+
+const history: ConversationEntry[] = [];
+
+// First question
+const result1 = await runCouncilPipeline("What database should I use?", ...);
+history.push({
+  question: "What database should I use?",
+  stage1: result1.stage1,
+  stage3Response: result1.stage3.response,
+});
+
+// Follow-up with context (last 5 entries included)
+const followUp = buildQuestionWithHistory("What about cost?", history);
+const result2 = await runCouncilPipeline(followUp, ...);
+```
+
+### Custom Agents
+
+```typescript
+const customAgents: AgentConfig[] = [
+  {
+    name: "ollama-llama",
+    command: ["ollama", "run", "llama2"],
+    promptViaStdin: true,
+  },
+  {
+    name: "ollama-mistral",
+    command: ["ollama", "run", "mistral"],
+    promptViaStdin: true,
+  },
+];
+
+const result = await runCouncilPipeline(
+  "Your question",
+  customAgents,
+  customAgents[0],
+  { tty: false, silent: true }
+);
+```
+
+## Testing
 
 ```bash
-# Start interactive mode
-agent-council
+# Unit tests (no agents required)
+node test-runner.mjs
 
-> What's the best database for real-time analytics?
-# Council processes and responds...
-
-> What about cost considerations?
-# Follow-up question with conversation history...
+# Integration tests (requires 2+ agents)
+node test-pipeline.mjs
 ```
+
+See [TEST_RECORD.md](./TEST_RECORD.md) for detailed test documentation.
+
+## CLI Reference
 
 ### Single Question Mode
 
 ```bash
-agent-council "Your question here"
+agent-council "Your question" [options]
 
-# Options
-agent-council "Question" --chairman gemini  # Set chairman (default: gemini)
-agent-council "Question" --timeout 60       # Per-agent timeout in seconds
-agent-council "Question" --json             # Output as JSON
+Options:
+  --chairman <name>   Which agent synthesizes the final answer
+  --timeout <seconds> Per-agent timeout (0 = no timeout)
+  --json              Output results as JSON
+  --help              Show help
+  --version           Show version
 ```
 
-### Slash Commands (REPL Mode)
+### Interactive REPL Mode
 
-| Command | Description |
-|---------|-------------|
-| `/help` | Show available commands |
-| `/agents` | List available agents |
-| `/chairman [name]` | Show or set chairman |
-| `/timeout [seconds]` | Show or set timeout |
-| `/history` | Show conversation history |
-| `/clear` | Clear conversation history |
-| `/exit` | Exit the REPL |
+```bash
+agent-council  # No arguments starts REPL
 
-## Interactive Controls
+Commands:
+  /help              Show available commands
+  /agents            List available agents
+  /chairman [name]   Show or set chairman
+  /timeout [seconds] Show or set timeout
+  /history           Show conversation history
+  /clear             Clear conversation history
+  /exit              Exit the REPL
+```
 
-During execution, use these keyboard controls:
+### Keyboard Controls (TTY Mode)
 
 | Key | Action |
 |-----|--------|
@@ -109,150 +293,36 @@ During execution, use these keyboard controls:
 | `ESC` | Abort all agents |
 | `Ctrl+C` | Quit |
 
-## Programmatic API
+## Project Structure
 
-agent-council can also be used as a library:
-
-```typescript
-import {
-  runCouncilPipeline,
-  filterAvailableAgents,
-  pickChairman,
-  DEFAULT_AGENTS,
-  type PipelineCallbacks,
-} from 'agent-council';
-
-// Check which agents are available
-const { available, unavailable } = filterAvailableAgents(DEFAULT_AGENTS);
-console.log(`Available: ${available.map(a => a.name).join(', ')}`);
-console.log(`Unavailable: ${unavailable.map(a => a.name).join(', ')}`);
-
-// Pick a chairman
-const chairman = pickChairman(available);
-
-// Optional: Stage callbacks for progress/checkpointing
-const callbacks: PipelineCallbacks = {
-  onStage1Complete: (results) => {
-    console.log(`Stage 1: ${results.length} responses collected`);
-  },
-  onStage2Complete: async (rankings, aggregate) => {
-    console.log(`Stage 2: Rankings complete`);
-    // Could save checkpoint here
-  },
-  onStage3Complete: (result) => {
-    console.log(`Stage 3: Chairman synthesis complete`);
-  },
-};
-
-// Run the council
-const result = await runCouncilPipeline(
-  "What's the best database for real-time analytics?",
-  available,
-  chairman,
-  { tty: false, silent: true, callbacks }
-);
-
-if (result) {
-  console.log('Final answer:', result.stage3.response);
-
-  // Access intermediate results
-  console.log('Individual responses:', result.stage1);
-  console.log('Peer rankings:', result.stage2);
-  console.log('Aggregate ranking:', result.aggregate);
-}
+```
+agent-council/
+├── src/
+│   ├── lib.ts          # Public API exports
+│   ├── pipeline.ts     # Core 3-stage orchestration
+│   ├── agents.ts       # Agent spawning and management
+│   ├── prompts.ts      # Prompt construction
+│   ├── types.ts        # TypeScript definitions
+│   ├── repl.ts         # Interactive REPL mode
+│   └── index.ts        # CLI entry point
+├── dist/               # Compiled JavaScript + declarations
+├── test-runner.mjs     # Unit test suite
+├── test-pipeline.mjs   # Integration test suite
+├── QUICKSTART.md       # Setup and usage guide
+├── TEST_RECORD.md      # Test documentation
+└── package.json
 ```
 
-### Conversation History
+## Documentation
 
-```typescript
-import {
-  runCouncilPipeline,
-  buildQuestionWithHistory,
-  type ConversationEntry,
-} from 'agent-council';
-
-const history: ConversationEntry[] = [];
-
-// First question
-const result1 = await runCouncilPipeline(
-  "What database should I use?",
-  available,
-  chairman,
-  { tty: false, silent: true }
-);
-
-// Store for context
-if (result1) {
-  history.push({
-    question: "What database should I use?",
-    stage1: result1.stage1,
-    stage3Response: result1.stage3.response,
-  });
-}
-
-// Follow-up with history context
-const result2 = await runCouncilPipeline(
-  buildQuestionWithHistory("What about cost?", history),
-  available,
-  chairman,
-  { tty: false, silent: true }
-);
-```
-
-### Custom Agents
-
-```typescript
-import { runCouncilPipeline, type AgentConfig } from 'agent-council';
-
-const customAgent: AgentConfig = {
-  name: "ollama",
-  command: ["ollama", "run", "llama2"],
-  promptViaStdin: true,
-};
-
-const agents = [customAgent, ...otherAgents];
-```
-
-### API Reference
-
-#### Core Functions
-
-| Function | Description |
-|----------|-------------|
-| `runCouncilPipeline()` | Execute the full 3-stage council process |
-| `pickChairman()` | Select a chairman from available agents |
-| `filterAvailableAgents()` | Check which agents are installed |
-| `callAgent()` | Execute a single agent (low-level) |
-
-#### Pipeline Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `tty` | boolean | - | Enable interactive TTY rendering |
-| `silent` | boolean | false | Suppress console output |
-| `timeoutMs` | number | undefined | Timeout per agent in milliseconds |
-| `callbacks` | PipelineCallbacks | undefined | Stage completion callbacks |
-
-#### Stage Callbacks
-
-```typescript
-interface PipelineCallbacks {
-  onStage1Complete?: (results: Stage1Result[]) => void | Promise<void>;
-  onStage2Complete?: (results: Stage2Result[], aggregate: AggregateRanking[]) => void | Promise<void>;
-  onStage3Complete?: (result: Stage3Result) => void | Promise<void>;
-}
-```
-
-Callbacks can be synchronous or async. The pipeline awaits async callbacks before proceeding.
-
-## Development
-
-```bash
-npm run dev -- "Test question"  # Run without building
-npm test                        # Run tests
-npm run test:watch              # Run tests in watch mode
-```
+- [QUICKSTART.md](./QUICKSTART.md) - Setup, testing, and usage examples
+- [TEST_RECORD.md](./TEST_RECORD.md) - Test suite documentation and results
 
 ## License
 
 MIT
+
+## Credits
+
+- Original project: [mylukin/agent-council](https://github.com/mylukin/agent-council)
+- This fork: [bladehstream/agent-council-testing](https://github.com/bladehstream/agent-council-testing)
