@@ -149,7 +149,7 @@ const BASE_AGENT_COMMANDS: Record<string, { command: string[]; promptViaStdin: b
   },
   gemini: {
     command: ["gemini", "--output-format", "text"],
-    promptViaStdin: true,
+    promptViaStdin: false, // Gemini uses positional args, not stdin
   },
 };
 

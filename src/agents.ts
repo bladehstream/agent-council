@@ -43,8 +43,8 @@ export const DEFAULT_AGENTS: AgentConfig[] = [
   { name: "codex", command: ["codex", "exec", "--skip-git-repo-check", "-"], promptViaStdin: true },
   // Claude: --print for non-interactive single response, text output format.
   { name: "claude", command: ["claude", "--print", "--output-format", "text"], promptViaStdin: true },
-  // Gemini: non-interactive text output, prompt via stdin.
-  { name: "gemini", command: ["gemini", "--output-format", "text"], promptViaStdin: true },
+  // Gemini: non-interactive text output, prompt as positional arg.
+  { name: "gemini", command: ["gemini", "--output-format", "text"], promptViaStdin: false },
 ];
 
 export const DEFAULT_CHAIRMAN = "gemini";
