@@ -32,8 +32,16 @@ The council runs a 3-stage pipeline:
 To invoke the council, use the `agent-council` CLI:
 
 ```bash
-# Single question
+# Single question (uses default models)
 agent-council "What's the best approach to implement caching for this API?"
+
+# Use presets for different quality/speed tradeoffs
+agent-council "Your question" --preset fast      # Quick answers
+agent-council "Your question" --preset balanced  # Good quality
+agent-council "Your question" --preset thorough  # Maximum quality
+
+# Custom model selection per stage
+agent-council "Your question" -r fast -e 6:fast -c claude:heavy
 
 # Interactive REPL mode
 agent-council
@@ -41,6 +49,14 @@ agent-council
 # JSON output for programmatic use
 agent-council "Your question" --json
 ```
+
+## Model Tiers
+
+| Tier | Claude | Gemini | Codex | Use Case |
+|------|--------|--------|-------|----------|
+| `fast` | Haiku | Flash | Mini | Quick, cost-sensitive |
+| `default` | Sonnet | Pro | Codex | Balanced |
+| `heavy` | Opus | Deep Think | Max | Complex reasoning |
 
 ## Prerequisites
 

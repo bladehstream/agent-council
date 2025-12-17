@@ -10,9 +10,9 @@
 | Suite | Passed | Failed | Skipped | Total |
 |-------|--------|--------|---------|-------|
 | Unit Tests | 31 | 0 | 0 | 31 |
-| Model Config Tests | 88 | 0 | 0 | 88 |
+| Model Config Tests | 101 | 0 | 0 | 101 |
 | Pipeline Tests | 4 | 3* | 0 | 7 |
-| **Total** | **123** | **3** | **0** | **126** |
+| **Total** | **136** | **3** | **0** | **139** |
 
 *Pipeline failures were test timeouts (120s limit), not functionality issues.
 
@@ -250,6 +250,24 @@ Chairman: gemini
 | 11.2 commandExists finds node | PASS |
 | 11.3 commandExists returns false for nonexistent | PASS |
 
+### Category 12: Stage Spec Parsing
+
+| Test | Status |
+|------|--------|
+| 12.1 parseStageSpec is exported | PASS |
+| 12.2 parseStageSpec parses tier-only spec "fast" | PASS |
+| 12.3 parseStageSpec parses tier-only spec "default" | PASS |
+| 12.4 parseStageSpec parses tier-only spec "heavy" | PASS |
+| 12.5 parseStageSpec parses count:tier "6:fast" | PASS |
+| 12.6 parseStageSpec distributes agents across providers | PASS |
+| 12.7 parseStageSpec parses count:tier "3:default" | PASS |
+| 12.8 parseStageSpec parses count:tier "1:heavy" | PASS |
+| 12.9 parseStageSpec parses explicit agent specs | PASS |
+| 12.10 parseStageSpec parses single explicit agent | PASS |
+| 12.11 parseStageSpec handles whitespace in tier spec | PASS |
+| 12.12 parseStageSpec handles whitespace in count:tier | PASS |
+| 12.13 parseStageSpec with single provider and count | PASS |
+
 ---
 
 ## Pipeline Integration Tests (test-pipeline.mjs)
@@ -332,6 +350,14 @@ Note: Pipeline tests take 60-90 seconds per test due to real AI agent calls.
 - [x] Agent creation from specs works
 - [x] Pipeline config building distributes agents correctly
 
+### Stage Spec Parsing (CLI)
+- [x] parseStageSpec exported from lib.js
+- [x] Tier-only specs: "fast", "default", "heavy"
+- [x] Count:tier specs: "6:fast", "3:default"
+- [x] Explicit agent specs: "claude:fast,gemini:default"
+- [x] Agents distributed across providers correctly
+- [x] Whitespace handling in specs
+
 ### Pipeline Operations
 - [x] runCouncilPipeline executes full 3-stage flow
 - [x] Stage 1: Individual agent responses collected
@@ -388,5 +414,5 @@ Note: Pipeline tests take 60-90 seconds per test due to real AI agent calls.
 | `README.md` | Added programmatic API and model selection docs |
 | `QUICKSTART.md` | NEW - Setup and usage guide |
 | `test-runner.mjs` | NEW - Unit test suite (31 tests) |
-| `test-model-config.mjs` | NEW - Model config test suite (88 tests) |
+| `test-model-config.mjs` | NEW - Model config test suite (101 tests) |
 | `test-pipeline.mjs` | NEW - Integration test suite (7 tests) |

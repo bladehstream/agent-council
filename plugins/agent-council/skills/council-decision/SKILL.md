@@ -31,9 +31,21 @@ The skill runs the `agent-council` CLI which:
 When you encounter a complex decision point:
 
 1. Formulate the question clearly
-2. Run: `agent-council "your question here"`
-3. Wait for the 3-stage pipeline to complete
-4. Use the synthesized answer to guide implementation
+2. Choose a preset based on complexity:
+   - `--preset fast` for quick decisions
+   - `--preset balanced` for most cases (default)
+   - `--preset thorough` for critical decisions
+3. Run: `agent-council "your question here" --preset balanced`
+4. Wait for the 3-stage pipeline to complete
+5. Use the synthesized answer to guide implementation
+
+### Custom Model Selection
+
+For fine-grained control, use stage flags:
+```bash
+# Fast responders, more evaluators, heavy chairman
+agent-council "your question" -r fast -e 6:fast -c claude:heavy
+```
 
 ## Example Questions
 
