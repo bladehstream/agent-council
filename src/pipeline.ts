@@ -360,29 +360,61 @@ function extractFallbackFromOutlines(
   pass1Sections: ParsedSection[],
   silent: boolean
 ): ParsedSection[] {
+  if (!silent) {
+    console.log(chalk.cyan(`  [Fallback] Pass 2 produced 0 sections, attempting to extract from section_outlines`));
+  }
+
   const outlinesSection = pass1Sections.find(s => s.name === "section_outlines");
-  if (!outlinesSection || !outlinesSection.content) {
+  if (!outlinesSection) {
+    if (!silent) {
+      console.log(chalk.yellow(`  [Fallback] No section_outlines found in Pass 1`));
+      console.log(chalk.yellow(`  [Fallback] Available Pass 1 sections: ${pass1Sections.map(s => s.name).join(", ")}`));
+    }
+    return [];
+  }
+
+  if (!outlinesSection.content || outlinesSection.content.trim().length === 0) {
+    if (!silent) {
+      console.log(chalk.yellow(`  [Fallback] section_outlines is empty`));
+    }
     return [];
   }
 
   // Try to parse as JSON first (structured outlines)
   let outlines: Record<string, string> = {};
+  const content = outlinesSection.content.trim();
+
   try {
-    outlines = JSON.parse(outlinesSection.content);
-  } catch {
+    outlines = JSON.parse(content);
+    if (!silent) {
+      console.log(chalk.cyan(`  [Fallback] Parsed JSON with ${Object.keys(outlines).length} keys: ${Object.keys(outlines).join(", ")}`));
+    }
+  } catch (e) {
+    if (!silent) {
+      console.log(chalk.yellow(`  [Fallback] JSON parse failed: ${e instanceof Error ? e.message : 'unknown error'}`));
+      console.log(chalk.yellow(`  [Fallback] Content preview (first 200 chars): ${content.substring(0, 200)}`));
+    }
     // If not JSON, try to extract key-value pairs from the text
-    // Format: "section_name": "outline content"
-    const lines = outlinesSection.content.split("\n");
+    // Formats: "section_name": "content" OR - section_name: content
+    const lines = content.split("\n");
     for (const line of lines) {
-      const match = line.match(/^\s*"?(\w+)"?\s*[:=]\s*"?(.+?)"?\s*,?\s*$/);
+      // Match: "key": "value" or key: value or - key: value
+      const match = line.match(/^\s*-?\s*"?(\w+)"?\s*[:=]\s*"?(.+?)"?\s*,?\s*$/) ||
+                    line.match(/^\s*"(\w+)":\s*"(.+)"\s*,?\s*$/);
       if (match) {
         outlines[match[1]] = match[2];
       }
     }
+    if (!silent) {
+      console.log(chalk.cyan(`  [Fallback] Regex extracted ${Object.keys(outlines).length} outlines`));
+    }
   }
 
-  if (!silent) {
-    console.log(chalk.cyan(`  [Fallback] Extracting ${Object.keys(outlines).length} outlines from Pass 1`));
+  if (Object.keys(outlines).length === 0) {
+    if (!silent) {
+      console.log(chalk.yellow(`  [Fallback] No outlines could be extracted`));
+    }
+    return [];
   }
 
   // Create synthetic sections for each Pass 2 section
@@ -400,8 +432,14 @@ function extractFallbackFromOutlines(
     }
   }
 
-  if (!silent && fallbackSections.length > 0) {
-    console.log(chalk.cyan(`  [Fallback] Created ${fallbackSections.length} sections from outlines`));
+  if (!silent) {
+    if (fallbackSections.length > 0) {
+      console.log(chalk.cyan(`  [Fallback] Created ${fallbackSections.length}/${PASS2_SECTIONS.length} sections from outlines`));
+    } else {
+      console.log(chalk.yellow(`  [Fallback] No matching section names found in outlines`));
+      console.log(chalk.yellow(`  [Fallback] Expected: ${PASS2_SECTIONS.join(", ")}`));
+      console.log(chalk.yellow(`  [Fallback] Got: ${Object.keys(outlines).join(", ")}`));
+    }
   }
 
   return fallbackSections;
