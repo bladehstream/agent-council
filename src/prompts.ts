@@ -466,23 +466,30 @@ export function buildPass2Prompt(
     PASS2_SECTION_DESCRIPTIONS
   );
 
+  // Put format FIRST before context to ensure model sees it early
   return `
+*** CRITICAL OUTPUT FORMAT - READ THIS FIRST ***
+${formatInstructions}
+*** END FORMAT INSTRUCTIONS ***
+
 You are the Chairman of an agent council (Pass 2 of 2: Detailed Specifications).
 You have already completed Pass 1 (synthesis). Now expand the section outlines into full specifications.
 
 Original Question: ${userQuery}
 
+<pass1_context>
 PASS 1 OUTPUT (your synthesis from the previous pass):
 ${pass1Output}
+</pass1_context>
 
+<agent_context>
 AGENT RESPONSES (for reference):
 ${referenceText}
+</agent_context>
 
 YOUR TASK (Pass 2 - Detailed Specifications):
 Expand each section outline from Pass 1 into comprehensive specifications.
 Use the agent responses as source material, but synthesize into a cohesive design.
-
-${formatInstructions}
 
 SECTION CONTENT REQUIREMENTS:
 
@@ -528,6 +535,7 @@ deployment: Infrastructure and operations including:
 - CI/CD pipeline design
 - Disaster recovery considerations
 
-Begin your detailed specifications:
+*** REMINDER: You MUST use the sectioned format with ===SECTION:name=== and ===END:name=== delimiters ***
+Start with ===SECTION:architecture=== now:
 `.trim();
 }
