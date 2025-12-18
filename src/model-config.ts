@@ -7,7 +7,7 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import type { AgentConfig } from "./types.js";
+import type { AgentConfig, TwoPassConfig } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -47,6 +47,8 @@ export interface StageConfig {
   tier: ModelTier;
   count: number;
   reasoning?: boolean;
+  /** Two-pass config for stage3 (ignored for stage1/stage2) */
+  twoPass?: TwoPassConfig;
 }
 
 export interface PresetConfig {
