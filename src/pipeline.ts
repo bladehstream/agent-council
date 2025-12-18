@@ -1,9 +1,13 @@
 import chalk from "chalk";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { buildChairmanPrompt, buildRankingPrompt, parseRankingFromText } from "./prompts.js";
 import { callAgent, DEFAULT_CHAIRMAN, runAgentsInteractive } from "./agents.js";
 import type {
   AgentConfig,
   AgentState,
+  CheckpointData,
+  CheckpointOptions,
   EnhancedPipelineConfig,
   LabelMap,
   Stage1Result,
@@ -35,6 +39,81 @@ export interface PipelineOptions {
 
 export interface EnhancedPipelineOptions extends PipelineOptions {
   config: EnhancedPipelineConfig;
+  checkpoint?: CheckpointOptions;
+}
+
+// ============================================================================
+// Checkpoint Functions
+// ============================================================================
+
+function getCheckpointPath(options: CheckpointOptions): string {
+  const dir = options.checkpointDir!;
+  const name = options.checkpointName ?? "council-checkpoint";
+  return join(dir, `${name}.json`);
+}
+
+/**
+ * Save checkpoint data to disk.
+ * Creates the checkpoint directory if it doesn't exist.
+ */
+export function saveCheckpoint(data: CheckpointData, options: CheckpointOptions): void {
+  if (!options.checkpointDir) return;
+
+  if (!existsSync(options.checkpointDir)) {
+    mkdirSync(options.checkpointDir, { recursive: true });
+  }
+
+  const path = getCheckpointPath(options);
+  writeFileSync(path, JSON.stringify(data, null, 2));
+}
+
+/**
+ * Load checkpoint data from disk.
+ * Returns null if no checkpoint exists or if the checkpoint is for a different question.
+ */
+export function loadCheckpoint(question: string, options: CheckpointOptions): CheckpointData | null {
+  if (!options.checkpointDir) return null;
+
+  const path = getCheckpointPath(options);
+  if (!existsSync(path)) return null;
+
+  try {
+    const content = readFileSync(path, "utf-8");
+    const data = JSON.parse(content) as CheckpointData;
+
+    // Validate checkpoint version
+    if (data.version !== 1) {
+      console.log(chalk.yellow("Checkpoint version mismatch, ignoring checkpoint"));
+      return null;
+    }
+
+    // Validate question matches
+    if (data.question !== question) {
+      console.log(chalk.yellow("Checkpoint question doesn't match, ignoring checkpoint"));
+      return null;
+    }
+
+    return data;
+  } catch (err) {
+    console.log(chalk.yellow(`Failed to load checkpoint: ${err instanceof Error ? err.message : err}`));
+    return null;
+  }
+}
+
+/**
+ * Remove checkpoint file after successful completion.
+ */
+export function clearCheckpoint(options: CheckpointOptions): void {
+  if (!options.checkpointDir) return;
+
+  const path = getCheckpointPath(options);
+  if (existsSync(path)) {
+    try {
+      unlinkSync(path);
+    } catch {
+      // Ignore errors when clearing checkpoint
+    }
+  }
 }
 
 export async function runCouncilPipeline(
@@ -221,72 +300,170 @@ export function abortIfNoStage1(stage1: Stage1Result[]) {
 }
 
 /**
+ * Check if a chairman response indicates failure.
+ */
+function isChairmanFailure(response: string): boolean {
+  return response.startsWith("Error from chairman");
+}
+
+/**
  * Enhanced pipeline with per-stage agent configuration.
- * Allows different agents/models for each stage of the council.
+ * Supports checkpointing for resumption and single chairman fallback.
  */
 export async function runEnhancedPipeline(
   question: string,
   options: EnhancedPipelineOptions
 ): Promise<PipelineResult | null> {
-  const { config, timeoutMs, tty, silent = false, callbacks } = options;
+  const { config, timeoutMs, tty, silent = false, callbacks, checkpoint } = options;
 
-  // Stage 1: Individual Responses (using stage1 agents)
-  const stage1States = await runAgentsInteractive(
-    "Stage 1 - Individual Responses",
-    question,
-    config.stage1.agents,
-    timeoutMs,
-    { tty }
-  );
-  const stage1 = extractStage1(stage1States);
+  let stage1: Stage1Result[];
+  let stage2: Stage2Result[];
+  let labelToAgent: LabelMap;
+  let aggregate: AggregateRanking[];
 
-  if (stage1.length === 0) {
+  // Check for existing checkpoint
+  const existingCheckpoint = checkpoint ? loadCheckpoint(question, checkpoint) : null;
+
+  if (existingCheckpoint) {
     if (!silent) {
-      console.log(chalk.red("No agent responses were completed; aborting."));
+      console.log(chalk.cyan(`\nResuming from checkpoint (completed: ${existingCheckpoint.completedStage})`));
     }
-    return null;
+
+    // Restore state from checkpoint
+    if (existingCheckpoint.completedStage === "stage1" || existingCheckpoint.completedStage === "stage2") {
+      stage1 = existingCheckpoint.stage1!;
+      labelToAgent = existingCheckpoint.labelToAgent!;
+
+      // Stage 1 callback (replay for consistency)
+      await callbacks?.onStage1Complete?.(stage1);
+    }
+
+    if (existingCheckpoint.completedStage === "stage2") {
+      stage2 = existingCheckpoint.stage2!;
+      aggregate = existingCheckpoint.aggregate!;
+
+      // Stage 2 callback (replay for consistency)
+      await callbacks?.onStage2Complete?.(stage2, aggregate);
+    }
   }
 
-  // Stage 1 callback
-  await callbacks?.onStage1Complete?.(stage1);
+  // Stage 1: Individual Responses (skip if restored from checkpoint)
+  if (!existingCheckpoint || existingCheckpoint.completedStage === "complete") {
+    const stage1States = await runAgentsInteractive(
+      "Stage 1 - Individual Responses",
+      question,
+      config.stage1.agents,
+      timeoutMs,
+      { tty }
+    );
+    stage1 = extractStage1(stage1States);
 
-  // Build label map for Stage 2
-  const labels = stage1.map((_, idx) => `Response ${String.fromCharCode(65 + idx)}`);
-  const labelToAgent: LabelMap = {};
-  labels.forEach((label, idx) => {
-    labelToAgent[label] = stage1[idx].agent;
-  });
+    if (stage1.length === 0) {
+      if (!silent) {
+        console.log(chalk.red("No agent responses were completed; aborting."));
+      }
+      return null;
+    }
 
-  // Stage 2: Peer Rankings (using stage2 agents - may differ from stage1)
-  const rankingPrompt = buildRankingPrompt(question, stage1);
-  const stage2States = await runAgentsInteractive(
-    "Stage 2 - Peer Rankings",
-    rankingPrompt,
-    config.stage2.agents,
-    timeoutMs,
-    { tty }
-  );
-  const stage2 = extractStage2(stage2States);
+    // Stage 1 callback
+    await callbacks?.onStage1Complete?.(stage1);
 
-  // Calculate aggregate rankings
-  const aggregate = calculateAggregateRankings(stage2, labelToAgent);
+    // Build label map for Stage 2
+    const labels = stage1.map((_, idx) => `Response ${String.fromCharCode(65 + idx)}`);
+    labelToAgent = {};
+    labels.forEach((label, idx) => {
+      labelToAgent[label] = stage1[idx].agent;
+    });
 
-  // Stage 2 callback
-  await callbacks?.onStage2Complete?.(stage2, aggregate);
+    // Save checkpoint after Stage 1
+    if (checkpoint) {
+      saveCheckpoint({
+        version: 1,
+        timestamp: new Date().toISOString(),
+        question,
+        completedStage: "stage1",
+        stage1,
+        labelToAgent,
+      }, checkpoint);
+      if (!silent) {
+        console.log(chalk.gray("Checkpoint saved after Stage 1"));
+      }
+    }
+  }
 
-  // Stage 3: Chairman Synthesis (using stage3 chairman config)
-  const stage3 = await runChairman(
+  // Stage 2: Peer Rankings (skip if restored from checkpoint with stage2 complete)
+  if (!existingCheckpoint || existingCheckpoint.completedStage === "stage1") {
+    const rankingPrompt = buildRankingPrompt(question, stage1!);
+    const stage2States = await runAgentsInteractive(
+      "Stage 2 - Peer Rankings",
+      rankingPrompt,
+      config.stage2.agents,
+      timeoutMs,
+      { tty }
+    );
+    stage2 = extractStage2(stage2States);
+
+    // Calculate aggregate rankings
+    aggregate = calculateAggregateRankings(stage2, labelToAgent!);
+
+    // Stage 2 callback
+    await callbacks?.onStage2Complete?.(stage2, aggregate);
+
+    // Save checkpoint after Stage 2
+    if (checkpoint) {
+      saveCheckpoint({
+        version: 1,
+        timestamp: new Date().toISOString(),
+        question,
+        completedStage: "stage2",
+        stage1: stage1!,
+        stage2,
+        labelToAgent: labelToAgent!,
+        aggregate,
+      }, checkpoint);
+      if (!silent) {
+        console.log(chalk.gray("Checkpoint saved after Stage 2"));
+      }
+    }
+  }
+
+  // Stage 3: Chairman Synthesis with fallback support
+  let stage3 = await runChairman(
     question,
-    stage1,
-    stage2,
+    stage1!,
+    stage2!,
     config.stage3.chairman,
     timeoutMs,
     silent,
     config.stage3.outputFormat
   );
 
+  // Try fallback if primary chairman failed and fallback is configured
+  if (isChairmanFailure(stage3.response) && config.stage3.fallback) {
+    if (!silent) {
+      console.log(chalk.yellow(`\nPrimary chairman (${config.stage3.chairman.name}) failed, trying fallback (${config.stage3.fallback.name})...`));
+    }
+    stage3 = await runChairman(
+      question,
+      stage1!,
+      stage2!,
+      config.stage3.fallback,
+      timeoutMs,
+      silent,
+      config.stage3.outputFormat
+    );
+  }
+
   // Stage 3 callback
   await callbacks?.onStage3Complete?.(stage3);
 
-  return { stage1, stage2, stage3, aggregate };
+  // Clear checkpoint on successful completion (even if chairman failed, stages are preserved)
+  if (checkpoint && !isChairmanFailure(stage3.response)) {
+    clearCheckpoint(checkpoint);
+    if (!silent) {
+      console.log(chalk.gray("Checkpoint cleared after successful completion"));
+    }
+  }
+
+  return { stage1: stage1!, stage2: stage2!, stage3, aggregate: aggregate! };
 }

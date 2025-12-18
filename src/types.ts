@@ -67,5 +67,37 @@ export type EnhancedPipelineConfig = {
      * ```
      */
     outputFormat?: string;
+    /**
+     * Optional fallback chairman to use if the primary chairman fails.
+     * Only one fallback attempt is made.
+     */
+    fallback?: AgentConfig;
   };
+};
+
+// Checkpoint types for pipeline resumption
+export type CheckpointStage = "stage1" | "stage2" | "complete";
+
+export type CheckpointData = {
+  version: 1;
+  timestamp: string;
+  question: string;
+  completedStage: CheckpointStage;
+  stage1?: Stage1Result[];
+  stage2?: Stage2Result[];
+  labelToAgent?: LabelMap;
+  aggregate?: Array<{ agent: string; averageRank: number; rankingsCount: number }>;
+};
+
+export type CheckpointOptions = {
+  /**
+   * Directory where checkpoint files are saved.
+   * If not provided, checkpointing is disabled.
+   */
+  checkpointDir?: string;
+  /**
+   * Optional filename for the checkpoint (without extension).
+   * Defaults to "council-checkpoint".
+   */
+  checkpointName?: string;
 };

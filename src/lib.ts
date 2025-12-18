@@ -14,6 +14,10 @@ export {
   extractStage2,
   calculateAggregateRankings,
   runChairman,
+  // Checkpoint functions
+  saveCheckpoint,
+  loadCheckpoint,
+  clearCheckpoint,
   type PipelineResult,
   type PipelineOptions,
   type PipelineCallbacks,
@@ -75,4 +79,8 @@ export type {
   LabelMap,
   EnhancedPipelineConfig,
   StageAgentConfig,
+  // Checkpoint types
+  CheckpointData,
+  CheckpointOptions,
+  CheckpointStage,
 } from './types.js';
