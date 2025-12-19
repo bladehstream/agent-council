@@ -17,6 +17,9 @@ export {
   runChairman,
   // Two-pass chairman
   runTwoPassChairman,
+  // Merge mode
+  runMergeChairman,
+  runTwoPassMergeChairman,
   // Checkpoint functions
   saveCheckpoint,
   loadCheckpoint,
@@ -25,6 +28,7 @@ export {
   type PipelineOptions,
   type PipelineCallbacks,
   type EnhancedPipelineOptions,
+  type AggregateRanking,
 } from './pipeline.js';
 
 // Model configuration
@@ -82,6 +86,13 @@ export {
   PASS2_SECTIONS,
   PASS1_SECTION_DESCRIPTIONS,
   PASS2_SECTION_DESCRIPTIONS,
+  // Merge mode prompts
+  formatAllResponsesForMerge,
+  buildMergeChairmanPrompt,
+  buildMergePass1Prompt,
+  buildMergePass2Prompt,
+  MERGE_PASS1_SECTIONS,
+  MERGE_PASS1_SECTION_DESCRIPTIONS,
   type ChairmanPromptOptions,
 } from './prompts.js';
 
@@ -98,6 +109,8 @@ export type {
   LabelMap,
   EnhancedPipelineConfig,
   StageAgentConfig,
+  // Pipeline mode
+  PipelineMode,
   // Two-pass types
   TwoPassConfig,
   TwoPassResult,

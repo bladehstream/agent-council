@@ -4,6 +4,13 @@ export type AgentConfig = {
   promptViaStdin?: boolean;
 };
 
+/**
+ * Pipeline operating mode.
+ * - 'compete': Responses are ranked, best one is refined (default)
+ * - 'merge': All responses are merged/synthesized together
+ */
+export type PipelineMode = 'compete' | 'merge';
+
 export type AgentStatus = "pending" | "running" | "completed" | "error" | "killed" | "timeout";
 
 export type AgentState = {
@@ -118,11 +125,30 @@ export type ParsedSection = {
 };
 
 export type EnhancedPipelineConfig = {
-  stage1: StageAgentConfig;
-  stage2: StageAgentConfig;
+  /**
+   * Pipeline operating mode.
+   * - 'compete' (default): Responses are ranked by evaluators, winner is refined
+   * - 'merge': All responses are merged/synthesized together (skips stage2)
+   */
+  mode?: PipelineMode;
+
+  stage1: StageAgentConfig & {
+    /**
+     * Optional prompt override for stage1 responders.
+     * If not provided, the question is passed directly.
+     */
+    prompt?: string;
+  };
+
+  /**
+   * Stage 2 configuration (evaluators/rankers).
+   * Required for 'compete' mode, ignored in 'merge' mode.
+   */
+  stage2?: StageAgentConfig;
+
   stage3: {
     chairman: AgentConfig;
-    useReasoning: boolean;
+    useReasoning?: boolean;
     /**
      * Optional output format instructions for the chairman.
      * When provided, these instructions are appended to the chairman prompt

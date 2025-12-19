@@ -10,6 +10,12 @@ import {
   parseSectionedOutput,
   PASS1_SECTIONS,
   PASS2_SECTIONS,
+  // Merge mode prompts
+  formatAllResponsesForMerge,
+  buildMergeChairmanPrompt,
+  buildMergePass1Prompt,
+  buildMergePass2Prompt,
+  MERGE_PASS1_SECTIONS,
   type ChairmanPromptOptions,
 } from "./prompts.js";
 import { callAgent, DEFAULT_CHAIRMAN, runAgentsInteractive } from "./agents.js";
@@ -23,6 +29,7 @@ import type {
   LabelMap,
   ModelTier,
   ParsedSection,
+  PipelineMode,
   Stage1Result,
   Stage2Result,
   Stage3Result,
@@ -33,10 +40,16 @@ import type {
 export type AggregateRanking = { agent: string; averageRank: number; rankingsCount: number };
 
 export type PipelineResult = {
+  /** Pipeline mode that was used */
+  mode: PipelineMode;
   stage1: Stage1Result[];
-  stage2: Stage2Result[];
+  /** Stage 2 results (null in merge mode) */
+  stage2: Stage2Result[] | null;
   stage3: Stage3Result;
-  aggregate: AggregateRanking[];
+  /** Aggregate rankings (null in merge mode) */
+  aggregate: AggregateRanking[] | null;
+  /** Two-pass result details (if two-pass was used) */
+  twoPassResult?: TwoPassResult;
 };
 
 export interface PipelineCallbacks {
@@ -189,7 +202,7 @@ export async function runCouncilPipeline(
   // Stage 3 callback
   await callbacks?.onStage3Complete?.(stage3);
 
-  return { stage1, stage2, stage3, aggregate };
+  return { mode: 'compete', stage1, stage2, stage3, aggregate };
 }
 
 /**
@@ -625,10 +638,191 @@ function combinePassOutputs(
   return allSections.join("\n\n");
 }
 
+// ============================================================================
+// Merge Mode Chairman
+// ============================================================================
+
+/**
+ * Run a single-pass merge chairman.
+ * Merges ALL stage 1 responses into a unified output.
+ *
+ * @param query - The original user question
+ * @param allResponses - All Stage 1 responses (not just winner)
+ * @param chairman - The chairman agent configuration
+ * @param timeoutMs - Optional timeout in milliseconds
+ * @param silent - Suppress console output
+ * @param outputFormat - Optional output format instructions
+ * @returns The merged response
+ */
+export async function runMergeChairman(
+  query: string,
+  allResponses: Stage1Result[],
+  chairman: AgentConfig,
+  timeoutMs: number | undefined,
+  silent: boolean = false,
+  outputFormat?: string
+): Promise<Stage3Result> {
+  if (!silent) {
+    console.log(`\nRunning merge chairman: ${chairman.name}...`);
+    console.log(`  Merging ${allResponses.length} responses`);
+  }
+
+  const formattedResponses = formatAllResponsesForMerge(allResponses);
+  const prompt = buildMergeChairmanPrompt(query, formattedResponses, outputFormat);
+
+  const state: AgentState = {
+    config: chairman,
+    status: "pending",
+    stdout: [],
+    stderr: [],
+  };
+
+  const res = await callAgent(state, prompt, timeoutMs);
+  const responseText =
+    res.status === "completed" ? res.stdout.join("").trim() : `Error from chairman (${res.status})`;
+
+  return { agent: chairman.name, response: responseText };
+}
+
+/**
+ * Run two-pass merge chairman.
+ * Pass 1: Merge and categorize all responses
+ * Pass 2: Refine and produce final output
+ *
+ * @param query - The original user question
+ * @param responses - All Stage 1 responses
+ * @param chairman - The chairman agent configuration
+ * @param twoPass - Two-pass configuration
+ * @param timeoutMs - Optional timeout in milliseconds
+ * @param silent - Suppress console output
+ * @param promptOptions - Chairman prompt options
+ * @returns TwoPassResult with outputs from both passes
+ */
+export async function runTwoPassMergeChairman(
+  query: string,
+  responses: Stage1Result[],
+  chairman: AgentConfig,
+  twoPass: TwoPassConfig,
+  timeoutMs: number | undefined,
+  silent: boolean = false,
+  promptOptions?: ChairmanPromptOptions
+): Promise<TwoPassResult> {
+  // Determine tiers for each pass
+  const { tier: chairmanTier } = parseAgentSpec(chairman.name);
+  const pass1Tier = twoPass.pass1Tier ?? chairmanTier;
+  const pass2Tier = twoPass.pass2Tier ?? getStepDownTier(pass1Tier);
+
+  // Create agents for each pass
+  const pass1Agent = pass1Tier === chairmanTier
+    ? chairman
+    : createAgentWithTier(chairman, pass1Tier);
+  const pass2Agent = pass2Tier === chairmanTier
+    ? chairman
+    : createAgentWithTier(chairman, pass2Tier);
+
+  if (!silent) {
+    console.log(`\nRunning two-pass merge chairman...`);
+    console.log(`  Pass 1 (${pass1Agent.name}): Merge & Categorize (${responses.length} responses)`);
+    console.log(`  Pass 2 (${pass2Agent.name}): Refine & Finalize`);
+  }
+
+  // === PASS 1: Merge & Categorize ===
+  if (!silent) {
+    console.log(`\n  [Pass 1] Running merge with ${pass1Agent.name}...`);
+  }
+
+  const pass1Prompt = twoPass.pass1Format
+    ? buildMergeChairmanPrompt(query, formatAllResponsesForMerge(responses), twoPass.pass1Format)
+    : buildMergePass1Prompt(query, responses, promptOptions);
+
+  const pass1State: AgentState = {
+    config: pass1Agent,
+    status: "pending",
+    stdout: [],
+    stderr: [],
+  };
+
+  const pass1Result = await callAgent(pass1State, pass1Prompt, timeoutMs);
+  const pass1Response = pass1Result.status === "completed"
+    ? pass1Result.stdout.join("").trim()
+    : `Error from chairman pass 1 (${pass1Result.status})`;
+
+  // Parse Pass 1 sections
+  const pass1Sections = parseSectionedOutput(pass1Response);
+  const pass1SectionNames = pass1Sections.filter(s => s.complete).map(s => s.name);
+
+  if (!silent) {
+    console.log(`  [Pass 1] Complete. Parsed ${pass1SectionNames.length}/${MERGE_PASS1_SECTIONS.length} sections.`);
+    if (pass1SectionNames.length < MERGE_PASS1_SECTIONS.length) {
+      const missing = MERGE_PASS1_SECTIONS.filter(s => !pass1SectionNames.includes(s));
+      console.log(chalk.yellow(`  [Pass 1] Missing sections: ${missing.join(", ")}`));
+    }
+  }
+
+  // Check for Pass 1 failure
+  if (pass1Response.startsWith("Error from chairman")) {
+    return {
+      pass1: { agent: pass1Agent.name, response: pass1Response },
+      pass2: { agent: pass2Agent.name, response: "" },
+      parsedSections: { pass1: [], pass2: [] },
+    };
+  }
+
+  // === PASS 2: Refine & Finalize ===
+  if (!silent) {
+    console.log(`\n  [Pass 2] Running refinement with ${pass2Agent.name}...`);
+  }
+
+  const pass2Prompt = twoPass.pass2Format
+    ? buildMergePass2Prompt(query, pass1Response, responses, { ...promptOptions, outputFormat: twoPass.pass2Format })
+    : buildMergePass2Prompt(query, pass1Response, responses, promptOptions);
+
+  const pass2State: AgentState = {
+    config: pass2Agent,
+    status: "pending",
+    stdout: [],
+    stderr: [],
+  };
+
+  const pass2Result = await callAgent(pass2State, pass2Prompt, timeoutMs);
+  const pass2Response = pass2Result.status === "completed"
+    ? pass2Result.stdout.join("").trim()
+    : `Error from chairman pass 2 (${pass2Result.status})`;
+
+  // Parse Pass 2 sections (if structured output was requested)
+  const pass2Sections = parseSectionedOutput(pass2Response);
+  const pass2SectionNames = pass2Sections.filter(s => s.complete).map(s => s.name);
+
+  if (!silent) {
+    if (pass2SectionNames.length > 0) {
+      console.log(`  [Pass 2] Complete. Parsed ${pass2SectionNames.length} sections.`);
+    } else {
+      console.log(`  [Pass 2] Complete. (Unstructured output)`);
+    }
+  }
+
+  // For merge mode, the combined output is either:
+  // 1. The Pass 2 response if it produced structured sections
+  // 2. Just the Pass 2 response if it's unstructured (which is fine for merge)
+  const combined = pass2SectionNames.length > 0
+    ? combinePassOutputs(pass1Response, pass2Response, pass1Sections, pass2Sections)
+    : pass2Response;
+
+  return {
+    pass1: { agent: pass1Agent.name, response: pass1Response },
+    pass2: { agent: pass2Agent.name, response: pass2Response },
+    combined,
+    parsedSections: {
+      pass1: pass1SectionNames,
+      pass2: pass2SectionNames,
+    },
+  };
+}
+
 export function printFinal(
   stage1: Stage1Result[],
-  stage2: Stage2Result[],
-  aggregate: ReturnType<typeof calculateAggregateRankings>,
+  stage2: Stage2Result[] | null,
+  aggregate: AggregateRanking[] | null,
   stage3: Stage3Result
 ) {
   console.log("\n=== Stage 1 Responses ===");
@@ -637,13 +831,15 @@ export function printFinal(
     console.log(r.response);
   });
 
-  console.log("\n=== Stage 2 Rankings ===");
-  stage2.forEach((r) => {
-    console.log(`\n[${r.agent}]`);
-    console.log(r.rankingRaw);
-  });
+  if (stage2 && stage2.length > 0) {
+    console.log("\n=== Stage 2 Rankings ===");
+    stage2.forEach((r) => {
+      console.log(`\n[${r.agent}]`);
+      console.log(r.rankingRaw);
+    });
+  }
 
-  if (aggregate.length) {
+  if (aggregate && aggregate.length > 0) {
     console.log("\nAggregate ranking (lower is better):");
     aggregate.forEach((entry) => {
       console.log(`- ${entry.agent}: avg rank ${entry.averageRank} (from ${entry.rankingsCount} rankings)`);
@@ -672,7 +868,11 @@ function isChairmanFailure(response: string): boolean {
 
 /**
  * Enhanced pipeline with per-stage agent configuration.
- * Supports checkpointing for resumption and single chairman fallback.
+ * Supports two modes:
+ * - 'compete' (default): Responses are ranked, winner is refined
+ * - 'merge': All responses are merged together (skips stage2)
+ *
+ * Also supports checkpointing for resumption and chairman fallback.
  */
 export async function runEnhancedPipeline(
   question: string,
@@ -680,17 +880,31 @@ export async function runEnhancedPipeline(
 ): Promise<PipelineResult | null> {
   const { config, timeoutMs, tty, silent = false, callbacks, checkpoint } = options;
 
-  let stage1: Stage1Result[];
-  let stage2: Stage2Result[];
-  let labelToAgent: LabelMap;
-  let aggregate: AggregateRanking[];
+  // Determine mode (default to compete for backward compatibility)
+  const mode: PipelineMode = config.mode || 'compete';
 
-  // Check for existing checkpoint
-  const existingCheckpoint = checkpoint ? loadCheckpoint(question, checkpoint) : null;
+  // Validate config for mode
+  if (mode === 'compete' && !config.stage2) {
+    throw new Error("Compete mode requires stage2 (evaluators) configuration");
+  }
+
+  if (!silent) {
+    console.log(chalk.cyan(`\nPipeline mode: ${mode.toUpperCase()}`));
+  }
+
+  let stage1: Stage1Result[];
+  let stage2: Stage2Result[] | null = null;
+  let labelToAgent: LabelMap = {};
+  let aggregate: AggregateRanking[] | null = null;
+
+  // Check for existing checkpoint (only relevant for compete mode)
+  const existingCheckpoint = checkpoint && mode === 'compete'
+    ? loadCheckpoint(question, checkpoint)
+    : null;
 
   if (existingCheckpoint) {
     if (!silent) {
-      console.log(chalk.cyan(`\nResuming from checkpoint (completed: ${existingCheckpoint.completedStage})`));
+      console.log(chalk.cyan(`Resuming from checkpoint (completed: ${existingCheckpoint.completedStage})`));
     }
 
     // Restore state from checkpoint
@@ -711,11 +925,16 @@ export async function runEnhancedPipeline(
     }
   }
 
-  // Stage 1: Individual Responses (skip if restored from checkpoint)
+  // ==========================================================================
+  // Stage 1: Individual Responses (same for both modes)
+  // ==========================================================================
   if (!existingCheckpoint || existingCheckpoint.completedStage === "complete") {
+    // Use custom prompt if provided, otherwise use the question directly
+    const stage1Prompt = config.stage1.prompt || question;
+
     const stage1States = await runAgentsInteractive(
       "Stage 1 - Individual Responses",
-      question,
+      stage1Prompt,
       config.stage1.agents,
       timeoutMs,
       { tty }
@@ -732,61 +951,26 @@ export async function runEnhancedPipeline(
     // Stage 1 callback
     await callbacks?.onStage1Complete?.(stage1);
 
-    // Build label map for Stage 2
-    const labels = stage1.map((_, idx) => `Response ${String.fromCharCode(65 + idx)}`);
-    labelToAgent = {};
-    labels.forEach((label, idx) => {
-      labelToAgent[label] = stage1[idx].agent;
-    });
+    // Build label map for Stage 2 (only needed for compete mode)
+    if (mode === 'compete') {
+      const labels = stage1.map((_, idx) => `Response ${String.fromCharCode(65 + idx)}`);
+      labels.forEach((label, idx) => {
+        labelToAgent[label] = stage1[idx].agent;
+      });
 
-    // Save checkpoint after Stage 1
-    if (checkpoint) {
-      saveCheckpoint({
-        version: 1,
-        timestamp: new Date().toISOString(),
-        question,
-        completedStage: "stage1",
-        stage1,
-        labelToAgent,
-      }, checkpoint);
-      if (!silent) {
-        console.log(chalk.gray("Checkpoint saved after Stage 1"));
-      }
-    }
-  }
-
-  // Stage 2: Peer Rankings (skip if restored from checkpoint with stage2 complete)
-  if (!existingCheckpoint || existingCheckpoint.completedStage === "stage1") {
-    const rankingPrompt = buildRankingPrompt(question, stage1!);
-    const stage2States = await runAgentsInteractive(
-      "Stage 2 - Peer Rankings",
-      rankingPrompt,
-      config.stage2.agents,
-      timeoutMs,
-      { tty }
-    );
-    stage2 = extractStage2(stage2States);
-
-    // Calculate aggregate rankings
-    aggregate = calculateAggregateRankings(stage2, labelToAgent!);
-
-    // Stage 2 callback
-    await callbacks?.onStage2Complete?.(stage2, aggregate);
-
-    // Save checkpoint after Stage 2
-    if (checkpoint) {
-      saveCheckpoint({
-        version: 1,
-        timestamp: new Date().toISOString(),
-        question,
-        completedStage: "stage2",
-        stage1: stage1!,
-        stage2,
-        labelToAgent: labelToAgent!,
-        aggregate,
-      }, checkpoint);
-      if (!silent) {
-        console.log(chalk.gray("Checkpoint saved after Stage 2"));
+      // Save checkpoint after Stage 1 (compete mode only)
+      if (checkpoint) {
+        saveCheckpoint({
+          version: 1,
+          timestamp: new Date().toISOString(),
+          question,
+          completedStage: "stage1",
+          stage1,
+          labelToAgent,
+        }, checkpoint);
+        if (!silent) {
+          console.log(chalk.gray("Checkpoint saved after Stage 1"));
+        }
       }
     }
   }
@@ -800,75 +984,199 @@ export async function runEnhancedPipeline(
   let stage3: Stage3Result;
   let twoPassResult: TwoPassResult | undefined;
 
-  // Stage 3: Chairman Synthesis
-  // Use two-pass if configured, otherwise single pass
-  if (config.stage3.twoPass?.enabled) {
-    // Two-pass chairman mode
-    twoPassResult = await runTwoPassChairman(
-      question,
-      stage1!,
-      stage2!,
-      config.stage3.chairman,
-      config.stage3.twoPass,
-      timeoutMs,
-      silent,
-      chairmanOptions
-    );
+  // ==========================================================================
+  // Mode-specific processing
+  // ==========================================================================
+  if (mode === 'merge') {
+    // ========================================================================
+    // MERGE MODE: Skip stage2, pass all responses to chairman
+    // ========================================================================
+    if (!silent) {
+      console.log(chalk.cyan(`\nMerge mode: Skipping Stage 2, merging ${stage1!.length} responses`));
+    }
 
-    // Use combined output as the stage3 response
-    stage3 = {
-      agent: `${twoPassResult.pass1.agent} + ${twoPassResult.pass2.agent}`,
-      response: twoPassResult.combined || twoPassResult.pass1.response + "\n\n" + twoPassResult.pass2.response,
-    };
-
-    // Check for failure and try fallback
-    const pass1Failed = isChairmanFailure(twoPassResult.pass1.response);
-    if (pass1Failed && config.stage3.fallback) {
-      if (!silent) {
-        console.log(chalk.yellow(`\nPrimary chairman (${config.stage3.chairman.name}) failed in two-pass mode, trying fallback (${config.stage3.fallback.name})...`));
-      }
-      // Run two-pass with fallback chairman
-      twoPassResult = await runTwoPassChairman(
+    if (config.stage3.twoPass?.enabled) {
+      // Two-pass merge chairman
+      twoPassResult = await runTwoPassMergeChairman(
         question,
         stage1!,
-        stage2!,
-        config.stage3.fallback,
+        config.stage3.chairman,
         config.stage3.twoPass,
         timeoutMs,
         silent,
         chairmanOptions
       );
+
       stage3 = {
         agent: `${twoPassResult.pass1.agent} + ${twoPassResult.pass2.agent}`,
-        response: twoPassResult.combined || twoPassResult.pass1.response + "\n\n" + twoPassResult.pass2.response,
+        response: twoPassResult.combined || twoPassResult.pass2.response,
       };
-    }
-  } else {
-    // Single-pass chairman mode (original behavior)
-    stage3 = await runChairman(
-      question,
-      stage1!,
-      stage2!,
-      config.stage3.chairman,
-      timeoutMs,
-      silent,
-      chairmanOptions
-    );
 
-    // Try fallback if primary chairman failed and fallback is configured
-    if (isChairmanFailure(stage3.response) && config.stage3.fallback) {
-      if (!silent) {
-        console.log(chalk.yellow(`\nPrimary chairman (${config.stage3.chairman.name}) failed, trying fallback (${config.stage3.fallback.name})...`));
+      // Try fallback if primary failed
+      if (isChairmanFailure(twoPassResult.pass1.response) && config.stage3.fallback) {
+        if (!silent) {
+          console.log(chalk.yellow(`\nPrimary chairman failed, trying fallback (${config.stage3.fallback.name})...`));
+        }
+        twoPassResult = await runTwoPassMergeChairman(
+          question,
+          stage1!,
+          config.stage3.fallback,
+          config.stage3.twoPass,
+          timeoutMs,
+          silent,
+          chairmanOptions
+        );
+        stage3 = {
+          agent: `${twoPassResult.pass1.agent} + ${twoPassResult.pass2.agent}`,
+          response: twoPassResult.combined || twoPassResult.pass2.response,
+        };
       }
-      stage3 = await runChairman(
+    } else {
+      // Single-pass merge chairman
+      stage3 = await runMergeChairman(
+        question,
+        stage1!,
+        config.stage3.chairman,
+        timeoutMs,
+        silent,
+        config.stage3.outputFormat
+      );
+
+      // Try fallback if primary failed
+      if (isChairmanFailure(stage3.response) && config.stage3.fallback) {
+        if (!silent) {
+          console.log(chalk.yellow(`\nPrimary chairman failed, trying fallback (${config.stage3.fallback.name})...`));
+        }
+        stage3 = await runMergeChairman(
+          question,
+          stage1!,
+          config.stage3.fallback,
+          timeoutMs,
+          silent,
+          config.stage3.outputFormat
+        );
+      }
+    }
+
+    // Stage 3 callback
+    await callbacks?.onStage3Complete?.(stage3);
+
+    return {
+      mode: 'merge',
+      stage1: stage1!,
+      stage2: null,
+      stage3,
+      aggregate: null,
+      twoPassResult,
+    };
+
+  } else {
+    // ========================================================================
+    // COMPETE MODE: Run stage2, then chairman with rankings context
+    // ========================================================================
+
+    // Stage 2: Peer Rankings (skip if restored from checkpoint with stage2 complete)
+    if (!existingCheckpoint || existingCheckpoint.completedStage === "stage1") {
+      const rankingPrompt = buildRankingPrompt(question, stage1!);
+      const stage2States = await runAgentsInteractive(
+        "Stage 2 - Peer Rankings",
+        rankingPrompt,
+        config.stage2!.agents,
+        timeoutMs,
+        { tty }
+      );
+      stage2 = extractStage2(stage2States);
+
+      // Calculate aggregate rankings
+      aggregate = calculateAggregateRankings(stage2, labelToAgent);
+
+      // Stage 2 callback
+      await callbacks?.onStage2Complete?.(stage2, aggregate);
+
+      // Save checkpoint after Stage 2
+      if (checkpoint) {
+        saveCheckpoint({
+          version: 1,
+          timestamp: new Date().toISOString(),
+          question,
+          completedStage: "stage2",
+          stage1: stage1!,
+          stage2,
+          labelToAgent,
+          aggregate,
+        }, checkpoint);
+        if (!silent) {
+          console.log(chalk.gray("Checkpoint saved after Stage 2"));
+        }
+      }
+    }
+
+    // Stage 3: Chairman Synthesis
+    if (config.stage3.twoPass?.enabled) {
+      // Two-pass chairman mode
+      twoPassResult = await runTwoPassChairman(
         question,
         stage1!,
         stage2!,
-        config.stage3.fallback,
+        config.stage3.chairman,
+        config.stage3.twoPass,
         timeoutMs,
         silent,
         chairmanOptions
       );
+
+      stage3 = {
+        agent: `${twoPassResult.pass1.agent} + ${twoPassResult.pass2.agent}`,
+        response: twoPassResult.combined || twoPassResult.pass1.response + "\n\n" + twoPassResult.pass2.response,
+      };
+
+      // Check for failure and try fallback
+      if (isChairmanFailure(twoPassResult.pass1.response) && config.stage3.fallback) {
+        if (!silent) {
+          console.log(chalk.yellow(`\nPrimary chairman failed in two-pass mode, trying fallback (${config.stage3.fallback.name})...`));
+        }
+        twoPassResult = await runTwoPassChairman(
+          question,
+          stage1!,
+          stage2!,
+          config.stage3.fallback,
+          config.stage3.twoPass,
+          timeoutMs,
+          silent,
+          chairmanOptions
+        );
+        stage3 = {
+          agent: `${twoPassResult.pass1.agent} + ${twoPassResult.pass2.agent}`,
+          response: twoPassResult.combined || twoPassResult.pass1.response + "\n\n" + twoPassResult.pass2.response,
+        };
+      }
+    } else {
+      // Single-pass chairman mode (original behavior)
+      stage3 = await runChairman(
+        question,
+        stage1!,
+        stage2!,
+        config.stage3.chairman,
+        timeoutMs,
+        silent,
+        chairmanOptions
+      );
+
+      // Try fallback if primary chairman failed
+      if (isChairmanFailure(stage3.response) && config.stage3.fallback) {
+        if (!silent) {
+          console.log(chalk.yellow(`\nPrimary chairman failed, trying fallback (${config.stage3.fallback.name})...`));
+        }
+        stage3 = await runChairman(
+          question,
+          stage1!,
+          stage2!,
+          config.stage3.fallback,
+          timeoutMs,
+          silent,
+          chairmanOptions
+        );
+      }
     }
   }
 
@@ -883,5 +1191,12 @@ export async function runEnhancedPipeline(
     }
   }
 
-  return { stage1: stage1!, stage2: stage2!, stage3, aggregate: aggregate! };
+  return {
+    mode: 'compete',
+    stage1: stage1!,
+    stage2: stage2!,
+    stage3,
+    aggregate: aggregate!,
+    twoPassResult,
+  };
 }

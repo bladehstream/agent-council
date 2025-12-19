@@ -7,12 +7,14 @@ This fork adds a **programmatic API** for integration into larger automation wor
 ## Features
 
 - **Multi-Agent Consensus**: Combines responses from multiple AI models for more reliable answers
-- **Peer Validation**: Agents anonymously rank each other's responses to surface quality
+- **Pipeline Modes**: Choose between **compete** (ranking) or **merge** (combine all) modes
+- **Peer Validation**: Agents anonymously rank each other's responses to surface quality (compete mode)
 - **Chairman Synthesis**: A designated agent synthesizes the final answer from all inputs
 - **Two-Pass Chairman**: Split large outputs into synthesis + detail passes for reliability (see [Two-Pass Chairman](#two-pass-chairman-synthesis))
+- **Merge Mode**: Combine ALL responses without ranking - ideal for brainstorming, test generation (see [Merge Mode](#merge-mode))
 - **Sectioned Output**: Robust parsing with explicit delimiters and truncation detection
 - **Granular Model Selection**: Choose model tiers (fast/default/heavy) per stage
-- **Presets**: Built-in configurations (fast, balanced, thorough) for common use cases
+- **Presets**: Built-in configurations for compete (fast, balanced, thorough) and merge modes
 - **Per-Stage Configuration**: Different agents and counts for each pipeline stage
 - **Programmatic API**: Full library exports for embedding in applications
 - **Stage Callbacks**: Hook into pipeline stages for progress tracking and checkpointing
@@ -45,6 +47,42 @@ This fork adds a **programmatic API** for integration into larger automation wor
 │  │  Chairman (Gemini) synthesizes      │                       │
 │  │  final answer from all responses    │                       │
 │  │  and peer rankings                  │                       │
+│  └─────────────────────────────────────┘                       │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Pipeline Modes
+
+Agent Council supports two pipeline modes:
+
+| Mode | Stage 2 | Use Case | When to Use |
+|------|---------|----------|-------------|
+| **compete** | Ranking | Find the BEST answer | Specifications, analysis, recommendations |
+| **merge** | Skipped | Combine ALL answers | Test plans, brainstorming, research synthesis |
+
+**Compete Mode** (default): Responses are ranked by peer evaluators, and the chairman refines the top-ranked answer.
+
+**Merge Mode**: ALL responses are passed directly to the chairman, who combines unique insights without discarding any. Ideal when diverse perspectives are more valuable than a single "winner".
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      MERGE MODE PIPELINE                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Stage 1: Individual Responses (Parallel)                       │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐                         │
+│  │  Codex  │  │ Claude  │  │ Gemini  │                         │
+│  └────┬────┘  └────┬────┘  └────┬────┘                         │
+│       │            │            │                               │
+│       └────────────┼────────────┘                               │
+│                    │ (No Stage 2 - skip ranking)                │
+│                    ▼                                            │
+│  Stage 3: Chairman Merges ALL Responses                         │
+│  ┌─────────────────────────────────────┐                       │
+│  │  Chairman combines ALL unique       │                       │
+│  │  insights from every responder      │                       │
+│  │  without ranking or discarding      │                       │
 │  └─────────────────────────────────────┘                       │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
@@ -163,13 +201,23 @@ Fine-tune which models run at each stage:
 
 ### Presets Reference
 
+**Compete Mode Presets** (default - ranking-based):
+
 | Preset | Stage 1 | Stage 2 | Chairman (Pass 1 / Pass 2) | Use Case |
 |--------|---------|---------|----------------------------|----------|
 | `fast` | 3x fast | 3x fast | default / default | Quick answers, cost-sensitive |
 | `balanced` | 3x default | 3x default | heavy / default | General purpose |
 | `thorough` | 3x heavy | 6x heavy | heavy / heavy | Complex problems, critical decisions |
 
-All presets use **two-pass chairman synthesis** by default for improved reliability. See [Two-Pass Chairman](#two-pass-chairman-synthesis) below.
+**Merge Mode Presets** (combine all responses):
+
+| Preset | Stage 1 | Stage 2 | Chairman (Pass 1 / Pass 2) | Use Case |
+|--------|---------|---------|----------------------------|----------|
+| `merge-fast` | 3x fast | *skipped* | default / default | Quick brainstorming |
+| `merge-balanced` | 3x default | *skipped* | heavy / default | Test plan generation |
+| `merge-thorough` | 3x heavy | *skipped* | heavy / heavy | Comprehensive research synthesis |
+
+All presets use **two-pass chairman synthesis** by default for improved reliability. See [Two-Pass Chairman](#two-pass-chairman-synthesis) and [Merge Mode](#merge-mode) below.
 
 ### Other CLI Options
 
@@ -282,13 +330,17 @@ if (result3) {
 ```typescript
 // Pipeline
 runCouncilPipeline(question, agents, chairman, options)
-runEnhancedPipeline(question, options)  // Per-stage configuration
+runEnhancedPipeline(question, options)  // Per-stage configuration, supports both modes
 runTwoPassChairman(query, stage1, stage2, chairman, twoPass, timeoutMs, silent?, options?)
+runChairman(query, stage1, stage2, chairman, timeoutMs, silent?, outputFormat?)
 pickChairman(agents, preferredName?)
 extractStage1(agentStates)
 extractStage2(agentStates)
 calculateAggregateRankings(stage2Results, labelMap)
-runChairman(query, stage1, stage2, chairman, timeoutMs, silent?, outputFormat?)
+
+// Merge Mode
+runMergeChairman(query, responses, chairman, timeoutMs, silent?, outputFormat?)
+runTwoPassMergeChairman(query, responses, chairman, twoPass, timeoutMs, silent?, options?)
 
 // Model Configuration
 loadModelsConfig()              // Load models.json
@@ -322,12 +374,20 @@ parseRankingFromText(text)
 MAX_HISTORY_ENTRIES
 SECTION_DELIMITERS, PASS1_SECTIONS, PASS2_SECTIONS
 
+// Merge Mode Prompts
+formatAllResponsesForMerge(responses)  // Format responses for merge chairman
+buildMergeChairmanPrompt(query, formattedResponses, outputFormat?)
+buildMergePass1Prompt(query, responses, options?)  // Two-pass merge: categorize
+buildMergePass2Prompt(query, pass1Output, responses, options?)  // Two-pass merge: refine
+MERGE_PASS1_SECTIONS
+
 // Types
 AgentConfig, AgentState, AgentStatus
 Stage1Result, Stage2Result, Stage3Result
 PipelineResult, PipelineOptions, PipelineCallbacks
 EnhancedPipelineOptions, EnhancedPipelineConfig
 TwoPassConfig, TwoPassResult, ParsedSection  // Two-pass types
+PipelineMode  // 'compete' | 'merge'
 ModelsConfig, PresetConfig, ModelTier
 FilterResult, ConversationEntry, SessionState
 ```
@@ -683,6 +743,113 @@ const config = {
 };
 ```
 
+### Merge Mode
+
+Merge mode combines ALL responder outputs without ranking, ideal for tasks where diverse perspectives are valuable (test generation, brainstorming, research synthesis).
+
+#### When to Use Merge Mode
+
+| Use Case | Why Merge Works Better |
+|----------|------------------------|
+| **Test plan generation** | Each model identifies unique edge cases and test scenarios |
+| **Brainstorming** | All ideas are valuable, don't want to discard any |
+| **Research synthesis** | Combine findings from multiple perspectives |
+| **Feature ideation** | Diverse suggestions without ranking |
+
+#### Programmatic Usage
+
+```typescript
+import {
+  runEnhancedPipeline,
+  getPreset,
+  buildPipelineConfig,
+  loadModelsConfig,
+  listProviders,
+} from 'agent-council';
+
+// Option 1: Use a merge preset
+const config = loadModelsConfig();
+const providers = listProviders(config).filter(p => /* check availability */);
+const preset = getPreset('merge-balanced', config);
+const pipelineConfig = buildPipelineConfig(preset, providers, config);
+
+const result = await runEnhancedPipeline("Generate test cases for a login system", {
+  config: pipelineConfig,
+  tty: false,
+  silent: true,
+});
+
+// Result structure for merge mode:
+// - result.mode === 'merge'
+// - result.stage1: all responder outputs
+// - result.stage2: null (skipped)
+// - result.aggregate: null (no ranking)
+// - result.stage3: chairman's merged output
+
+// Option 2: Custom merge configuration
+const mergeConfig = {
+  mode: 'merge' as const,
+  stage1: {
+    agents: [
+      createAgentFromSpec('claude:default'),
+      createAgentFromSpec('gemini:default'),
+      createAgentFromSpec('codex:default'),
+    ],
+  },
+  // Note: stage2 is omitted for merge mode
+  stage3: {
+    chairman: createAgentFromSpec('claude:heavy'),
+    useReasoning: false,
+    twoPass: {
+      enabled: true,
+      pass1Tier: 'heavy',
+      pass2Tier: 'default',
+    },
+    outputFormat: `Output a JSON object with test cases:
+{
+  "tests": {
+    "unit": [...],
+    "integration": [...],
+    "e2e": [...]
+  }
+}`,
+  },
+};
+
+const result2 = await runEnhancedPipeline("Generate comprehensive tests", {
+  config: mergeConfig,
+  tty: false,
+  silent: true,
+});
+```
+
+#### Merge Mode with Custom Prompts
+
+```typescript
+import { runMergeChairman, runTwoPassMergeChairman } from 'agent-council';
+
+// Single-pass merge (simpler, for shorter outputs)
+const result = await runMergeChairman(
+  "Combine these test ideas",
+  stage1Results,           // Array of Stage1Result
+  chairmanAgent,           // AgentConfig
+  timeoutMs,
+  true,                    // silent
+  "Output as JSON array"   // optional outputFormat
+);
+
+// Two-pass merge (for large structured outputs)
+const twoPassResult = await runTwoPassMergeChairman(
+  "Generate comprehensive test plan",
+  stage1Results,
+  chairmanAgent,
+  { enabled: true, pass1Tier: 'heavy', pass2Tier: 'default' },
+  timeoutMs,
+  true,
+  { outputFormat: "..." }
+);
+```
+
 ### Custom Agents
 
 ```typescript
@@ -720,6 +887,9 @@ npm run test:real-world
 # Pipeline tests (requires 2+ agents)
 npm run test:pipeline
 
+# Merge mode tests (requires 2+ agents)
+node tests/test-merge-mode.mjs
+
 # Run all tests
 npm run test:all
 ```
@@ -727,6 +897,7 @@ npm run test:all
 **Test Coverage:**
 - Unit tests: 31 tests (build, exports, types, utilities)
 - Model config tests: 103 tests (models.json, presets, agent creation, stage spec parsing)
+- Merge mode tests: 24 tests (merge prompts, config, pipeline integration, two-pass merge)
 - Real-world tests: 21 tests (contract, integration, smoke tests with real CLIs)
 - Pipeline tests: 7 tests (full 3-stage execution with real agents)
 
@@ -808,6 +979,7 @@ agent-council/
 ├── tests/              # Test suites
 │   ├── test-runner.mjs       # Unit tests (31)
 │   ├── test-model-config.mjs # Model config tests (103)
+│   ├── test-merge-mode.mjs   # Merge mode tests (24)
 │   ├── test-real-world.mjs   # Contract/integration/smoke tests (21)
 │   └── test-pipeline.mjs     # Pipeline integration tests (7)
 ├── models.json         # Model definitions and presets

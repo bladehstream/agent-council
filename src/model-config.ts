@@ -7,7 +7,7 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import type { AgentConfig, TwoPassConfig } from "./types.js";
+import type { AgentConfig, TwoPassConfig, EnhancedPipelineConfig, PipelineMode } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -53,8 +53,11 @@ export interface StageConfig {
 
 export interface PresetConfig {
   description: string;
+  /** Pipeline mode: 'compete' (default) or 'merge' */
+  mode?: 'compete' | 'merge';
   stage1: StageConfig;
-  stage2: StageConfig;
+  /** Stage 2 config (not needed for merge mode) */
+  stage2?: StageConfig;
   stage3: StageConfig;
 }
 
@@ -71,18 +74,9 @@ export interface ModelsConfig {
   };
 }
 
-export interface EnhancedPipelineConfig {
-  stage1: {
-    agents: AgentConfig[];
-  };
-  stage2: {
-    agents: AgentConfig[];
-  };
-  stage3: {
-    chairman: AgentConfig;
-    useReasoning: boolean;
-  };
-}
+// EnhancedPipelineConfig is imported from types.ts
+// Re-export for convenience
+export type { EnhancedPipelineConfig } from "./types.js";
 
 // ============================================================================
 // Configuration Loading
@@ -229,19 +223,24 @@ export function buildPipelineConfig(
   availableProviders: string[],
   config: ModelsConfig = loadModelsConfig()
 ): EnhancedPipelineConfig {
-  // Create agents for each stage based on preset and available providers
-  const stage1Agents: AgentConfig[] = [];
-  const stage2Agents: AgentConfig[] = [];
+  const mode: PipelineMode = preset.mode || 'compete';
 
-  // Distribute agents across available providers
+  // Create agents for stage1 based on preset and available providers
+  const stage1Agents: AgentConfig[] = [];
   for (let i = 0; i < preset.stage1.count; i++) {
     const provider = availableProviders[i % availableProviders.length];
     stage1Agents.push(createAgentConfig(provider, preset.stage1.tier, config));
   }
 
-  for (let i = 0; i < preset.stage2.count; i++) {
-    const provider = availableProviders[i % availableProviders.length];
-    stage2Agents.push(createAgentConfig(provider, preset.stage2.tier, config));
+  // Create stage2 agents only for compete mode
+  let stage2Config: { agents: AgentConfig[] } | undefined;
+  if (mode === 'compete' && preset.stage2) {
+    const stage2Agents: AgentConfig[] = [];
+    for (let i = 0; i < preset.stage2.count; i++) {
+      const provider = availableProviders[i % availableProviders.length];
+      stage2Agents.push(createAgentConfig(provider, preset.stage2.tier, config));
+    }
+    stage2Config = { agents: stage2Agents };
   }
 
   // Parse chairman spec (e.g., "claude:heavy")
@@ -256,14 +255,24 @@ export function buildPipelineConfig(
 
   const chairman = createAgentConfig(chairmanProvider, chairTier, config);
 
-  return {
+  // Build the pipeline config
+  const pipelineConfig: EnhancedPipelineConfig = {
+    mode,
     stage1: { agents: stage1Agents },
-    stage2: { agents: stage2Agents },
     stage3: {
       chairman,
       useReasoning: preset.stage3.reasoning ?? false,
+      // Pass through two-pass config if present
+      twoPass: preset.stage3.twoPass,
     },
   };
+
+  // Add stage2 only if needed
+  if (stage2Config) {
+    pipelineConfig.stage2 = stage2Config;
+  }
+
+  return pipelineConfig;
 }
 
 // ============================================================================

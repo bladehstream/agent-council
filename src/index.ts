@@ -104,9 +104,15 @@ function printPresetList() {
   console.log(chalk.bold("\nAvailable Presets:\n"));
 
   for (const [name, preset] of Object.entries(config.presets)) {
+    const mode = (preset as any).mode || 'compete';
     console.log(`${chalk.bold(name)}: ${preset.description}`);
+    console.log(`    Mode: ${mode}`);
     console.log(`    Stage 1: ${preset.stage1.count}x ${preset.stage1.tier}`);
-    console.log(`    Stage 2: ${preset.stage2.count}x ${preset.stage2.tier}`);
+    if (preset.stage2) {
+      console.log(`    Stage 2: ${preset.stage2.count}x ${preset.stage2.tier}`);
+    } else {
+      console.log(`    Stage 2: (skipped in merge mode)`);
+    }
     console.log(`    Stage 3: 1x ${preset.stage3.tier}${preset.stage3.reasoning ? " +reasoning" : ""}`);
     console.log();
   }

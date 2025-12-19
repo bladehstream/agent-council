@@ -128,6 +128,49 @@
           "pass2Tier": "heavy"
         }
       }
+    },
+    "merge-fast": {
+      "description": "Fast merge mode - combine outputs from multiple models",
+      "mode": "merge",
+      "stage1": { "tier": "fast", "count": 3 },
+      "stage3": {
+        "tier": "default",
+        "count": 1,
+        "twoPass": {
+          "enabled": true,
+          "pass1Tier": "default",
+          "pass2Tier": "default"
+        }
+      }
+    },
+    "merge-balanced": {
+      "description": "Balanced merge mode - comprehensive synthesis",
+      "mode": "merge",
+      "stage1": { "tier": "default", "count": 3 },
+      "stage3": {
+        "tier": "heavy",
+        "count": 1,
+        "twoPass": {
+          "enabled": true,
+          "pass1Tier": "heavy",
+          "pass2Tier": "default"
+        }
+      }
+    },
+    "merge-thorough": {
+      "description": "Thorough merge mode - maximum detail synthesis",
+      "mode": "merge",
+      "stage1": { "tier": "heavy", "count": 3 },
+      "stage3": {
+        "tier": "heavy",
+        "count": 1,
+        "reasoning": true,
+        "twoPass": {
+          "enabled": true,
+          "pass1Tier": "heavy",
+          "pass2Tier": "heavy"
+        }
+      }
     }
   },
   "defaults": {
