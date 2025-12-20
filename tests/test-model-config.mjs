@@ -165,7 +165,10 @@ await runTest('1.9 presets have required structure', async () => {
   for (const [name, preset] of Object.entries(config.presets)) {
     assert(preset.description, `${name} preset should have description`);
     assert(preset.stage1, `${name} preset should have stage1`);
-    assert(preset.stage2, `${name} preset should have stage2`);
+    // Merge presets skip stage2 (mode: 'merge')
+    if (preset.mode !== 'merge') {
+      assert(preset.stage2, `${name} preset should have stage2`);
+    }
     assert(preset.stage3, `${name} preset should have stage3`);
     assert(preset.stage1.tier, `${name} preset stage1 should have tier`);
     assert(preset.stage1.count, `${name} preset stage1 should have count`);
@@ -296,13 +299,13 @@ await runTest('3.4 createAgentConfig creates valid agent for gemini:fast', async
 await runTest('3.5 createAgentConfig creates valid agent for gemini:default', async () => {
   const agent = createAgentConfig('gemini', 'default');
   assertEqual(agent.name, 'gemini:default', 'Name should be gemini:default');
-  assertIncludes(agent.command, 'gemini-2.5-flash', 'Command should include gemini-2.5-flash model');
+  assertIncludes(agent.command, 'gemini-3-flash-preview', 'Command should include gemini-3-flash-preview model');
 });
 
 await runTest('3.6 createAgentConfig creates valid agent for gemini:heavy', async () => {
   const agent = createAgentConfig('gemini', 'heavy');
   assertEqual(agent.name, 'gemini:heavy', 'Name should be gemini:heavy');
-  assertIncludes(agent.command, 'gemini-2.5-pro', 'Command should include gemini-2.5-pro model');
+  assertIncludes(agent.command, 'gemini-3-pro-preview', 'Command should include gemini-3-pro-preview model');
 });
 
 await runTest('3.7 createAgentConfig creates valid agent for codex:fast', async () => {
@@ -772,10 +775,13 @@ await runTest('9.6 preset stage counts are positive integers', async () => {
   for (const presetName of presets) {
     const preset = getPreset(presetName);
     assert(preset.stage1.count > 0, `${presetName} stage1 count should be positive`);
-    assert(preset.stage2.count > 0, `${presetName} stage2 count should be positive`);
+    // Merge presets skip stage2
+    if (preset.stage2) {
+      assert(preset.stage2.count > 0, `${presetName} stage2 count should be positive`);
+      assert(Number.isInteger(preset.stage2.count), `${presetName} stage2 count should be integer`);
+    }
     assert(preset.stage3.count > 0, `${presetName} stage3 count should be positive`);
     assert(Number.isInteger(preset.stage1.count), `${presetName} stage1 count should be integer`);
-    assert(Number.isInteger(preset.stage2.count), `${presetName} stage2 count should be integer`);
     assert(Number.isInteger(preset.stage3.count), `${presetName} stage3 count should be integer`);
   }
 });
@@ -795,8 +801,8 @@ await runTest('10.1 Claude model IDs are correct', async () => {
 await runTest('10.2 Gemini model IDs use full model names', async () => {
   const config = loadModelsConfig();
   assertEqual(config.providers.gemini.tiers.fast.model, 'gemini-2.5-flash-lite', 'Gemini fast should be gemini-2.5-flash-lite');
-  assertEqual(config.providers.gemini.tiers.default.model, 'gemini-2.5-flash', 'Gemini default should be gemini-2.5-flash');
-  assertEqual(config.providers.gemini.tiers.heavy.model, 'gemini-2.5-pro', 'Gemini heavy should be gemini-2.5-pro');
+  assertEqual(config.providers.gemini.tiers.default.model, 'gemini-3-flash-preview', 'Gemini default should be gemini-3-flash-preview');
+  assertEqual(config.providers.gemini.tiers.heavy.model, 'gemini-3-pro-preview', 'Gemini heavy should be gemini-3-pro-preview');
 });
 
 await runTest('10.3 Codex model IDs use gpt-5.1-codex', async () => {

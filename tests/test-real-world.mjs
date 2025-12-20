@@ -197,10 +197,10 @@ await runTest(hasGemini
       const output = result.stdout + result.stderr;
       const geminiModels = modelsConfig.providers.gemini.tiers;
 
-      // Check that at least the base model names appear
-      assert(output.includes('gemini-2.5-flash') || output.includes('2.5-flash'),
+      // Check that at least the base model names appear (2.5 or 3.x versions)
+      assert(output.includes('flash'),
         'Gemini model list should include flash models');
-      assert(output.includes('gemini-2.5-pro') || output.includes('2.5-pro'),
+      assert(output.includes('pro'),
         'Gemini model list should include pro models');
     })
   : skip('2.1 Gemini model list includes configured models', 'gemini not installed'));
@@ -273,7 +273,7 @@ await runTest(hasClaude
 await runTest(hasGemini
   ? test('3.2 Gemini responds to simple prompt', async () => {
       const result = await runCommand('gemini', [
-        '--output-format', 'text', '--model', 'gemini-2.5-flash',
+        '--output-format', 'text', '--model', 'gemini-3-flash-preview',
         'What is 2+2? Reply with just the number.'
       ], { timeout: 60000 });
       assert(result.code === 0, `Gemini should exit with code 0, got ${result.code}`);

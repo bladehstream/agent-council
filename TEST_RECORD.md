@@ -251,7 +251,7 @@ The 3 failed tests were due to **test harness timeouts** (120s limit), not API f
 | Provider | Fast | Default | Heavy |
 |----------|------|---------|-------|
 | Claude | haiku | sonnet | opus |
-| Gemini | gemini-2.5-flash-lite | gemini-2.5-flash | gemini-2.5-pro |
+| Gemini | gemini-2.5-flash-lite | gemini-3-flash-preview | gemini-3-pro-preview |
 | Codex | gpt-5.1-codex-mini | gpt-5.1-codex | gpt-5.1-codex-max |
 
 ### CLI Command Structure

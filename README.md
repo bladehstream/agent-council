@@ -183,8 +183,8 @@ Fine-tune which models run at each stage:
 #     heavy: opus - Claude Opus 4.5
 # ✓ gemini (gemini)
 #     fast: gemini-2.5-flash-lite
-#     default: gemini-2.5-flash
-#     heavy: gemini-2.5-pro
+#     default: gemini-3-flash-preview
+#     heavy: gemini-3-pro-preview
 # ...
 
 # See preset configurations
