@@ -145,7 +145,7 @@ const BASE_AGENT_COMMANDS: Record<string, { command: string[]; promptViaStdin: b
   },
   gemini: {
     command: ["gemini", "--output-format", "text"],
-    promptViaStdin: false, // Gemini uses positional args, not stdin
+    promptViaStdin: true, // Use stdin for large prompts (chairman can be 100KB+)
   },
 };
 
