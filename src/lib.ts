@@ -93,7 +93,11 @@ export {
   buildMergePass2Prompt,
   MERGE_PASS1_SECTIONS,
   MERGE_PASS1_SECTION_DESCRIPTIONS,
+  // Custom prompt support
+  PROMPT_PLACEHOLDERS,
+  applyPromptPlaceholders,
   type ChairmanPromptOptions,
+  type Pass2PromptOptions,
 } from './prompts.js';
 
 // Types

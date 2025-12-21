@@ -780,7 +780,12 @@ export async function runTwoPassMergeChairman(
   }
 
   const pass1Prompt = twoPass.pass1Format
-    ? buildMergeChairmanPrompt(query, formatAllResponsesForMerge(responses), twoPass.pass1Format)
+    ? buildMergeChairmanPrompt(
+        query,
+        formatAllResponsesForMerge(responses),
+        twoPass.pass1Format,
+        twoPass.pass1IsCustomPrompt ?? false
+      )
     : buildMergePass1Prompt(query, responses, promptOptions);
 
   const pass1State: AgentState = {
@@ -845,7 +850,11 @@ export async function runTwoPassMergeChairman(
   }
 
   const pass2Prompt = twoPass.pass2Format
-    ? buildMergePass2Prompt(query, pass1Response, responses, { ...promptOptions, outputFormat: twoPass.pass2Format })
+    ? buildMergePass2Prompt(query, pass1Response, responses, {
+        ...promptOptions,
+        outputFormat: twoPass.pass2Format,
+        isCustomPrompt: twoPass.pass2IsCustomPrompt ?? false,
+      })
     : buildMergePass2Prompt(query, pass1Response, responses, promptOptions);
 
   const pass2State: AgentState = {

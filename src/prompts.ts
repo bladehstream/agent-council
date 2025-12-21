@@ -3,6 +3,73 @@ import type { ConversationEntry, ParsedSection, Stage1Result, Stage2Result } fro
 export const MAX_HISTORY_ENTRIES = 5;
 
 // ============================================================================
+// Custom Prompt Placeholders
+// ============================================================================
+
+/**
+ * Placeholders that can be used in custom prompts.
+ * When a custom prompt is provided, these placeholders are replaced with actual values.
+ *
+ * Usage in custom prompts:
+ * - ${QUERY} - The original user query
+ * - ${RESPONSES} - Formatted Stage 1 responses (with model attribution)
+ * - ${RANKINGS} - Formatted Stage 2 rankings (compete mode only)
+ * - ${PASS1_OUTPUT} - Output from Pass 1 (for Pass 2 prompts)
+ * - ${RESPONSE_COUNT} - Number of responses being processed
+ * - ${MODEL_LIST} - Comma-separated list of model names
+ */
+export const PROMPT_PLACEHOLDERS = {
+  QUERY: '${QUERY}',
+  RESPONSES: '${RESPONSES}',
+  RANKINGS: '${RANKINGS}',
+  PASS1_OUTPUT: '${PASS1_OUTPUT}',
+  RESPONSE_COUNT: '${RESPONSE_COUNT}',
+  MODEL_LIST: '${MODEL_LIST}',
+} as const;
+
+/**
+ * Replace all placeholders in a custom prompt with actual values.
+ *
+ * @param customPrompt - The custom prompt template with placeholders
+ * @param values - Object containing replacement values
+ * @returns The prompt with all placeholders replaced
+ */
+export function applyPromptPlaceholders(
+  customPrompt: string,
+  values: {
+    query?: string;
+    responses?: string;
+    rankings?: string;
+    pass1Output?: string;
+    responseCount?: number;
+    modelList?: string;
+  }
+): string {
+  let result = customPrompt;
+
+  if (values.query !== undefined) {
+    result = result.replace(/\$\{QUERY\}/g, values.query);
+  }
+  if (values.responses !== undefined) {
+    result = result.replace(/\$\{RESPONSES\}/g, values.responses);
+  }
+  if (values.rankings !== undefined) {
+    result = result.replace(/\$\{RANKINGS\}/g, values.rankings);
+  }
+  if (values.pass1Output !== undefined) {
+    result = result.replace(/\$\{PASS1_OUTPUT\}/g, values.pass1Output);
+  }
+  if (values.responseCount !== undefined) {
+    result = result.replace(/\$\{RESPONSE_COUNT\}/g, String(values.responseCount));
+  }
+  if (values.modelList !== undefined) {
+    result = result.replace(/\$\{MODEL_LIST\}/g, values.modelList);
+  }
+
+  return result;
+}
+
+// ============================================================================
 // Sectioned Output Format
 // ============================================================================
 
@@ -314,16 +381,34 @@ ${r.response}
 /**
  * Build the merge chairman prompt for single-pass merge mode.
  *
+ * When `customPrompt` is provided, it completely replaces the default prompt.
+ * Use placeholders ${QUERY} and ${RESPONSES} in custom prompts.
+ *
  * @param query - The original user question
  * @param formattedResponses - Formatted responses from formatAllResponsesForMerge
- * @param outputFormat - Optional output format instructions
+ * @param outputFormatOrCustomPrompt - Output format instructions OR complete custom prompt
+ * @param isCustomPrompt - If true, first param is a complete custom prompt (not appended)
  * @returns The merge chairman prompt
  */
 export function buildMergeChairmanPrompt(
   query: string,
   formattedResponses: string,
-  outputFormat?: string
+  outputFormatOrCustomPrompt?: string,
+  isCustomPrompt: boolean = false
 ): string {
+  // If custom prompt provided, use it directly with placeholder substitution
+  if (outputFormatOrCustomPrompt && isCustomPrompt) {
+    return applyPromptPlaceholders(outputFormatOrCustomPrompt, {
+      query,
+      responses: formattedResponses,
+      responseCount: (formattedResponses.match(/===RESPONSE FROM:/g) || []).length,
+      modelList: (formattedResponses.match(/MODEL: ([^\n]+)/g) || [])
+        .map(m => m.replace('MODEL: ', ''))
+        .join(', '),
+    });
+  }
+
+  // Default behavior: use base prompt, optionally append output format
   const basePrompt = `You are the Chairman of an agent council operating in MERGE MODE.
 
 You have received multiple responses to the same query from different AI models.
@@ -365,8 +450,8 @@ ${formattedResponses}
 
 Produce a merged output that combines the best of all responses.`;
 
-  if (outputFormat) {
-    return `${basePrompt}\n\n## Output Format\n\n${outputFormat}`;
+  if (outputFormatOrCustomPrompt) {
+    return `${basePrompt}\n\n## Output Format\n\n${outputFormatOrCustomPrompt}`;
   }
 
   return basePrompt;
@@ -473,23 +558,47 @@ Begin your merge synthesis:
 }
 
 /**
+ * Extended options for Pass 2 prompts that support custom prompts.
+ */
+export interface Pass2PromptOptions extends ChairmanPromptOptions {
+  /** If true, outputFormat is a complete custom prompt (not appended) */
+  isCustomPrompt?: boolean;
+}
+
+/**
  * Build Pass 2 prompt for two-pass merge mode.
  * Pass 2 focuses on refining, filling gaps, and producing final output.
+ *
+ * When isCustomPrompt is true, outputFormat becomes the complete prompt.
+ * Use placeholders: ${QUERY}, ${RESPONSES}, ${PASS1_OUTPUT}, ${MODEL_LIST}
  *
  * @param query - The original user question
  * @param pass1Output - The output from Pass 1
  * @param responses - Original Stage 1 responses (for reference)
- * @param options - Chairman prompt options
+ * @param options - Chairman prompt options (extended with isCustomPrompt)
  * @returns The merge Pass 2 prompt
  */
 export function buildMergePass2Prompt(
   query: string,
   pass1Output: string,
   responses: Stage1Result[],
-  options?: ChairmanPromptOptions
+  options?: Pass2PromptOptions
 ): string {
   const opts = options ?? {};
 
+  // If custom prompt provided, use it directly with placeholder substitution
+  if (opts.outputFormat && opts.isCustomPrompt) {
+    const formattedResponses = formatAllResponsesForMerge(responses);
+    return applyPromptPlaceholders(opts.outputFormat, {
+      query,
+      responses: formattedResponses,
+      pass1Output,
+      responseCount: responses.length,
+      modelList: responses.map(r => r.agent).join(', '),
+    });
+  }
+
+  // Default behavior: build standard Pass 2 prompt
   // Brief reference to original responses
   const referenceText = responses.map((r) => {
     const content = opts.useSummaries && r.summary ? r.summary : r.response;

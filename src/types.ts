@@ -118,13 +118,31 @@ export type TwoPassConfig = {
   /**
    * Output format instructions for Pass 1.
    * Should request synthesis-level output: summary, ambiguities, phases, outlines.
+   *
+   * If pass1IsCustomPrompt is true, this is used as the COMPLETE prompt
+   * (not appended to default). Use placeholders: ${QUERY}, ${RESPONSES}, ${MODEL_LIST}
    */
   pass1Format?: string;
   /**
+   * If true, pass1Format is a complete custom prompt that replaces the default.
+   * Placeholders ${QUERY}, ${RESPONSES}, ${MODEL_LIST} will be substituted.
+   * If false (default), pass1Format is appended as "Output Format" section.
+   */
+  pass1IsCustomPrompt?: boolean;
+  /**
    * Output format instructions for Pass 2.
    * Should request detailed spec sections, with Pass 1 output as context.
+   *
+   * If pass2IsCustomPrompt is true, this is used as the COMPLETE prompt.
+   * Use placeholders: ${QUERY}, ${RESPONSES}, ${PASS1_OUTPUT}, ${MODEL_LIST}
    */
   pass2Format?: string;
+  /**
+   * If true, pass2Format is a complete custom prompt that replaces the default.
+   * Placeholders ${QUERY}, ${RESPONSES}, ${PASS1_OUTPUT}, ${MODEL_LIST} will be substituted.
+   * If false (default), pass2Format is appended as "Output Format" section.
+   */
+  pass2IsCustomPrompt?: boolean;
 };
 
 /**
