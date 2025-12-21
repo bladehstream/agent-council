@@ -799,6 +799,25 @@ export async function runTwoPassMergeChairman(
   if (pass1Response.startsWith("Error from chairman") || pass1Response.startsWith("Error:")) {
     if (!silent) {
       console.log(chalk.red(`  [Pass 1] FAILED: ${pass1Response.substring(0, 100)}...`));
+
+      // Show stderr for debugging
+      const stderr = pass1Result.stderr.join("\n").trim();
+      if (stderr) {
+        // Check for rate limit patterns
+        const rateLimitPatterns = [
+          /rate.?limit/i, /quota.?exceeded/i, /too.?many.?requests/i,
+          /429/, /RESOURCE_EXHAUSTED/i, /overloaded/i, /tokens?.?per.?min/i
+        ];
+        const isRateLimit = rateLimitPatterns.some(p => p.test(stderr));
+
+        if (isRateLimit) {
+          console.log(chalk.yellow(`  [Pass 1] Rate limit detected! Consider:`));
+          console.log(chalk.yellow(`    - Wait 60 seconds and retry`));
+          console.log(chalk.yellow(`    - Switch to a different provider`));
+        }
+        console.log(chalk.gray(`  [Pass 1] stderr: ${stderr.substring(0, 500)}`));
+      }
+
       console.log(chalk.red(`  Aborting two-pass synthesis - Pass 1 did not produce valid content.`));
     }
     return {
@@ -840,6 +859,36 @@ export async function runTwoPassMergeChairman(
   const pass2Response = pass2Result.status === "completed"
     ? pass2Result.stdout.join("").trim()
     : `Error from chairman pass 2 (${pass2Result.status})`;
+
+  // Check for Pass 2 failure
+  if (pass2Response.startsWith("Error from chairman") || pass2Response.startsWith("Error:")) {
+    if (!silent) {
+      console.log(chalk.red(`  [Pass 2] FAILED: ${pass2Response.substring(0, 100)}...`));
+
+      // Show stderr for debugging
+      const stderr = pass2Result.stderr.join("\n").trim();
+      if (stderr) {
+        const rateLimitPatterns = [
+          /rate.?limit/i, /quota.?exceeded/i, /too.?many.?requests/i,
+          /429/, /RESOURCE_EXHAUSTED/i, /overloaded/i, /tokens?.?per.?min/i
+        ];
+        const isRateLimit = rateLimitPatterns.some(p => p.test(stderr));
+
+        if (isRateLimit) {
+          console.log(chalk.yellow(`  [Pass 2] Rate limit detected! Consider:`));
+          console.log(chalk.yellow(`    - Wait 60 seconds and retry`));
+          console.log(chalk.yellow(`    - Switch to a different provider`));
+        }
+        console.log(chalk.gray(`  [Pass 2] stderr: ${stderr.substring(0, 500)}`));
+      }
+    }
+    // Still return what we have - Pass 1 succeeded
+    return {
+      pass1: { agent: pass1Agent.name, response: pass1Response },
+      pass2: { agent: pass2Agent.name, response: pass2Response },
+      parsedSections: { pass1: pass1SectionNames, pass2: [] },
+    };
+  }
 
   // Parse Pass 2 sections (if structured output was requested)
   const pass2Sections = parseSectionedOutput(pass2Response);
