@@ -197,8 +197,8 @@ Fine-tune which models run at each stage:
 | Tier | Claude | Gemini | Codex | Best For |
 |------|--------|--------|-------|----------|
 | `fast` | Haiku | 2.5 Flash Lite | 5.1 Codex Mini | Quick responses, cost-sensitive |
-| `default` | Sonnet | 2.5 Flash | 5.1 Codex | Balanced quality/speed |
-| `heavy` | Opus | 2.5 Pro | 5.1 Codex Max | Complex reasoning |
+| `default` | Sonnet | 3 Flash Preview | 5.1 Codex | Balanced quality/speed |
+| `heavy` | Opus | 3 Pro Preview | 5.1 Codex Max | Complex reasoning |
 
 ### Presets Reference
 
@@ -1052,9 +1052,9 @@ npm run test:all
 ```
 
 **Test Coverage:**
-- Unit tests: 31 tests (build, exports, types, utilities)
-- Model config tests: 103 tests (models.json, presets, agent creation, stage spec parsing)
-- Merge mode tests: 24 tests (merge prompts, config, pipeline integration, two-pass merge)
+- Unit tests: 33 tests (build, exports, types, utilities)
+- Model config tests: 105 tests (models.json, presets, agent creation, stage spec parsing)
+- Merge mode tests: 16 tests (merge prompts, config, pipeline integration, two-pass merge)
 - Real-world tests: 21 tests (contract, integration, smoke tests with real CLIs)
 - Pipeline tests: 7 tests (full 3-stage execution with real agents)
 
@@ -1078,8 +1078,10 @@ Options:
   -r, --respond       Responders: [count] <tier> or <agent specs>
   -e, --evaluate      Evaluators: [count] <tier> or <agent specs>
   -c, --chairman      Chairman agent (e.g., 'claude:heavy')
-  -p, --preset        Use preset (fast, balanced, thorough)
+  -p, --preset        Use preset (fast, balanced, thorough, merge-*)
   -t, --timeout       Per-agent timeout in seconds (0 = no timeout)
+  --critique          Enable adversarial critique loop
+  --confirm           Require human confirmation before applying fixes
   --json              Output results as JSON
   --list-models       List available models and tiers
   --list-presets      List available presets
@@ -1134,9 +1136,9 @@ agent-council/
 │   └── index.ts        # CLI entry point
 ├── dist/               # Compiled JavaScript + declarations
 ├── tests/              # Test suites
-│   ├── test-runner.mjs       # Unit tests (31)
-│   ├── test-model-config.mjs # Model config tests (103)
-│   ├── test-merge-mode.mjs   # Merge mode tests (24)
+│   ├── test-runner.mjs       # Unit tests (33)
+│   ├── test-model-config.mjs # Model config tests (105)
+│   ├── test-merge-mode.mjs   # Merge mode tests (16)
 │   ├── test-real-world.mjs   # Contract/integration/smoke tests (21)
 │   └── test-pipeline.mjs     # Pipeline integration tests (7)
 ├── models.json         # Model definitions and presets

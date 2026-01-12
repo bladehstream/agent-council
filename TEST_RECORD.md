@@ -1,7 +1,7 @@
 # Test Run Record
 
-**Date:** 2025-12-17
-**Environment:** Linux 6.14.0-1017-oem, Node.js v20.19.6
+**Date:** 2026-01-12
+**Environment:** Linux 6.14.0-37-generic, Node.js v20.x
 
 ---
 
@@ -9,11 +9,12 @@
 
 | Suite | Passed | Failed | Skipped | Total |
 |-------|--------|--------|---------|-------|
-| Unit Tests | 31 | 0 | 0 | 31 |
-| Model Config Tests | 103 | 0 | 0 | 103 |
+| Unit Tests | 33 | 0 | 0 | 33 |
+| Model Config Tests | 105 | 0 | 0 | 105 |
+| Merge Mode Tests | 16 | 0 | 0 | 16 |
 | Real-World Tests | 21 | 0 | 0 | 21 |
 | Pipeline Tests | 4 | 3* | 0 | 7 |
-| **Total** | **159** | **3** | **0** | **162** |
+| **Total** | **179** | **3** | **0** | **182** |
 
 *Pipeline failures were test timeouts (120s limit), not functionality issues.
 
@@ -31,7 +32,7 @@ Chairman: gemini
 
 ---
 
-## Unit Tests (test-runner.mjs)
+## Unit Tests (test-runner.mjs) - 33 tests
 
 ### Category 1: Build & Package Structure
 
@@ -106,7 +107,7 @@ Chairman: gemini
 
 ---
 
-## Model Configuration Tests (test-model-config.mjs)
+## Model Configuration Tests (test-model-config.mjs) - 105 tests
 
 ### Category 1: Models.json Structure
 
@@ -237,8 +238,9 @@ The 3 failed tests were due to **test harness timeouts** (120s limit), not API f
 
 | File | Purpose | Run Command |
 |------|---------|-------------|
-| `tests/test-runner.mjs` | Unit tests (31) | `npm test` |
-| `tests/test-model-config.mjs` | Model config tests (103) | `npm run test:config` |
+| `tests/test-runner.mjs` | Unit tests (33) | `npm test` |
+| `tests/test-model-config.mjs` | Model config tests (105) | `npm run test:config` |
+| `tests/test-merge-mode.mjs` | Merge mode tests (16) | `node tests/test-merge-mode.mjs` |
 | `tests/test-real-world.mjs` | Contract/integration/smoke (21) | `npm run test:real-world` |
 | `tests/test-pipeline.mjs` | Pipeline integration (7) | `npm run test:pipeline` |
 
@@ -253,6 +255,8 @@ The 3 failed tests were due to **test harness timeouts** (120s limit), not API f
 | Claude | haiku | sonnet | opus |
 | Gemini | gemini-2.5-flash-lite | gemini-3-flash-preview | gemini-3-pro-preview |
 | Codex | gpt-5.1-codex-mini | gpt-5.1-codex | gpt-5.1-codex-max |
+
+Note: Gemini models have been updated to the 3.x series (gemini-3-flash-preview, gemini-3-pro-preview) for default and heavy tiers.
 
 ### CLI Command Structure
 
@@ -304,6 +308,13 @@ Note: Claude requires both `--tools WebSearch` and `--allowedTools WebSearch` fo
 - [x] onStage2Complete fires after Stage 2
 - [x] onStage3Complete fires after Stage 3
 - [x] Async callbacks are properly awaited
+
+### Adversarial Critique (v0.1.2+)
+- [x] Critique types exported (CritiqueItem, CritiqueResult, CritiqueConfig)
+- [x] Critique prompt functions exported
+- [x] CLI --critique and --confirm flags available
+- [x] Two-tier critique system (blocking vs advisory)
+- [x] Human confirmation mode supported
 
 ---
 

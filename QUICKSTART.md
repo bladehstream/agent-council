@@ -73,7 +73,7 @@ npm test
 # or: node tests/test-runner.mjs && node tests/test-model-config.mjs
 ```
 
-Expected output: `SUMMARY: 31 passed, 0 failed, 0 skipped` followed by `MODEL CONFIG TESTS: 103 passed, 0 failed, 0 skipped`
+Expected output: `SUMMARY: 33 passed, 0 failed, 0 skipped` followed by `MODEL CONFIG TESTS: 105 passed, 0 failed, 0 skipped`
 
 ### Real-World Tests (requires agents)
 ```bash
@@ -177,8 +177,8 @@ Stage spec formats:
 | Tier | Claude | Gemini | Codex | Use Case |
 |------|--------|--------|-------|----------|
 | `fast` | Haiku | 2.5 Flash Lite | 5.1 Codex Mini | Quick, cost-sensitive |
-| `default` | Sonnet | 2.5 Flash | 5.1 Codex | Balanced |
-| `heavy` | Opus | 2.5 Pro | 5.1 Codex Max | Complex reasoning |
+| `default` | Sonnet | 3 Flash Preview | 5.1 Codex | Balanced |
+| `heavy` | Opus | 3 Pro Preview | 5.1 Codex Max | Complex reasoning |
 
 ### Programmatic Usage
 
@@ -314,6 +314,55 @@ const result2 = await runEnhancedPipeline(
 );
 ```
 
+#### With Adversarial Critique Loop
+```javascript
+import { runEnhancedPipeline, createAgentFromSpec } from 'agent-council';
+
+// Enable critique phase to improve output quality
+const configWithCritique = {
+  stage1: {
+    agents: [
+      createAgentFromSpec('claude:default'),
+      createAgentFromSpec('gemini:default'),
+    ],
+  },
+  stage2: {
+    agents: [
+      createAgentFromSpec('claude:default'),
+      createAgentFromSpec('gemini:default'),
+    ],
+  },
+  stage3: {
+    chairman: createAgentFromSpec('claude:heavy'),
+  },
+  // Add critique phase
+  critique: {
+    enabled: true,
+    confirm: false, // Set to true for human confirmation before fixes
+  },
+};
+
+const result = await runEnhancedPipeline("Design a REST API", {
+  config: configWithCritique,
+  tty: false,
+  silent: true,
+});
+
+if (result?.critiqueResult) {
+  console.log('Applied critiques:', result.critiqueResult.blocking.applied.length);
+  console.log('Advisory items:', result.critiqueResult.advisory.length);
+}
+```
+
+CLI usage:
+```bash
+# Enable critique loop
+./dist/index.js "Design a REST API" --preset fast --critique
+
+# With human confirmation
+./dist/index.js "Design a REST API" --preset fast --critique --confirm
+```
+
 #### Custom Agents (Non-Standard CLIs)
 ```javascript
 import { runCouncilPipeline } from 'agent-council';
@@ -348,6 +397,8 @@ const result = await runCouncilPipeline(
 | `runEnhancedPipeline(question, options)` | Run with per-stage model configuration |
 | `runCouncilPipeline(question, agents, chairman, options)` | Run with default models (legacy) |
 | `pickChairman(agents, name?)` | Select chairman from available agents |
+| `runCritiquePhase(draft, agents, timeoutMs)` | Run adversarial critique on draft |
+| `runCritiqueResolve(draft, critiques, chairman, timeoutMs)` | Resolve critiques |
 
 ### Model Configuration
 
@@ -412,6 +463,20 @@ interface PipelineResult {
   stage2: Array<{ agent: string; rankingRaw: string; parsedRanking: string[] }>;
   stage3: { agent: string; response: string };
   aggregate: Array<{ agent: string; averageRank: number; rankingsCount: number }>;
+  critiqueResult?: CritiqueResult; // Present when critique is enabled
+}
+
+interface CritiqueResult {
+  blocking: {
+    applied: CritiqueItem[];   // Critiques that were applied
+    rejected: CritiqueItem[];  // Critiques rejected (with reasons)
+  };
+  advisory: CritiqueItem[];    // Logged for human review
+  userConfirmation?: {
+    prompted: boolean;
+    decision: 'apply' | 'skip' | null;
+    timestamp: string;
+  };
 }
 ```
 
@@ -448,8 +513,9 @@ agent-council/
 │   └── index.ts        # CLI entry point
 ├── dist/               # Compiled output
 ├── tests/              # Test suites
-│   ├── test-runner.mjs       # Unit tests (31)
-│   ├── test-model-config.mjs # Model config tests (103)
+│   ├── test-runner.mjs       # Unit tests (33)
+│   ├── test-model-config.mjs # Model config tests (105)
+│   ├── test-merge-mode.mjs   # Merge mode tests (16)
 │   ├── test-real-world.mjs   # Contract/integration/smoke (21)
 │   └── test-pipeline.mjs     # Pipeline integration tests (7)
 ├── models.json         # Model definitions and presets
