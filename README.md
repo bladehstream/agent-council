@@ -20,6 +20,7 @@ This fork adds a **programmatic API** for integration into larger automation wor
 - **Stage Callbacks**: Hook into pipeline stages for progress tracking and checkpointing
 - **Silent Mode**: Suppress console output for clean programmatic usage
 - **Custom Agents**: Add any CLI-based AI tool as a council member
+- **Adversarial Critique**: Optional critique loop improves output quality (see [Adversarial Critique Loop](#adversarial-critique-loop))
 
 ## How It Works
 
@@ -848,6 +849,141 @@ const twoPassResult = await runTwoPassMergeChairman(
   true,
   { outputFormat: "..." }
 );
+```
+
+### Adversarial Critique Loop
+
+Enable an optional critique phase that improves output quality through adversarial review. Works with both compete and merge modes.
+
+#### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    CRITIQUE LOOP (Optional)                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Stage 1-3: Normal Pipeline                                      │
+│  ┌─────────────────────────────────────────┐                    │
+│  │  Generate Draft v1 (merge or compete)   │                    │
+│  └────────────────┬────────────────────────┘                    │
+│                   │                                              │
+│                   ▼                                              │
+│  Critique Phase: Adversarial Review (Parallel)                   │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐                         │
+│  │ Critic  │  │ Critic  │  │ Critic  │                         │
+│  │ finds   │  │ finds   │  │ finds   │                         │
+│  │ issues  │  │ issues  │  │ issues  │                         │
+│  └────┬────┘  └────┬────┘  └────┬────┘                         │
+│       │            │            │                               │
+│       └────────────┼────────────┘                               │
+│                    ▼                                            │
+│  Resolve Phase: Chairman Applies Fixes                          │
+│  ┌─────────────────────────────────────┐                       │
+│  │  - Apply BLOCKING critiques         │                       │
+│  │  - Log ADVISORY for human review    │                       │
+│  │  - Explain decisions                │                       │
+│  └─────────────────────────────────────┘                       │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Two-Tier Critique System
+
+Critics categorize findings into two tiers:
+
+**BLOCKING (auto-applied by chairman):**
+- Architectural flaws that would cause implementation failure
+- Security vulnerabilities
+- Internal contradictions
+- Missing requirements that block functionality
+- Unclear or unverifiable acceptance criteria
+
+**ADVISORY (logged for human review, never auto-applied):**
+- Technology choices with potential long-term trade-offs
+- Scalability or performance concerns
+- Alternative approaches worth considering
+- Maintainability suggestions
+
+#### CLI Usage
+
+```bash
+# Enable critique loop
+agent-council "Design a REST API" --preset fast --critique
+
+# With human confirmation before applying fixes
+agent-council "Design a REST API" --preset merge-fast --critique --confirm
+```
+
+#### Programmatic Usage
+
+```typescript
+import { runEnhancedPipeline, type EnhancedPipelineConfig } from 'agent-council';
+
+const config: EnhancedPipelineConfig = {
+  mode: 'merge',
+  stage1: { agents: responders },
+  stage3: { chairman: chairmanAgent },
+  // Enable critique phase
+  critique: {
+    enabled: true,
+    // Optional: use different agents for critique (default: reuse stage1)
+    agents: critiqueAgents,
+    // Optional: use different chairman for resolution (default: reuse stage3)
+    chairman: critiqueChairman,
+    // Optional: custom critique prompt template
+    prompt: "Review this artifact critically...",
+    // Optional: pause for human confirmation
+    confirm: true,
+  },
+};
+
+const result = await runEnhancedPipeline(question, { config, tty: true, timeoutMs });
+
+// Access critique results
+if (result.critiqueResult) {
+  console.log('Applied critiques:', result.critiqueResult.blocking.applied);
+  console.log('Rejected critiques:', result.critiqueResult.blocking.rejected);
+  console.log('Advisory concerns:', result.critiqueResult.advisory);
+
+  // User confirmation details (if confirm: true)
+  if (result.critiqueResult.userConfirmation) {
+    console.log('User decision:', result.critiqueResult.userConfirmation.decision);
+  }
+}
+```
+
+#### Critique Result Structure
+
+```typescript
+interface CritiqueResult {
+  blocking: {
+    applied: CritiqueItem[];   // Critiques that were applied
+    rejected: CritiqueItem[];  // Critiques rejected (with reasons)
+  };
+  advisory: CritiqueItem[];    // Logged for human review
+  userConfirmation?: {
+    prompted: boolean;
+    decision: 'apply' | 'skip' | null;
+    timestamp: string;
+  };
+  timing?: {
+    critiqueStartMs: number;
+    critiqueEndMs: number;
+    resolveStartMs: number;
+    resolveEndMs: number;
+  };
+}
+
+interface CritiqueItem {
+  source: string;           // Which model raised it
+  category: 'blocking' | 'advisory';
+  description: string;
+  location: string;
+  recommendation: string;
+  rationale: string;
+  applied?: boolean;        // Only for blocking
+  rejectionReason?: string; // If rejected
+}
 ```
 
 ### Prompt Delivery via Stdin

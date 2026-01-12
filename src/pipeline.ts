@@ -17,6 +17,12 @@ import {
   buildMergePass2Prompt,
   MERGE_PASS1_SECTIONS,
   type ChairmanPromptOptions,
+  // Critique phase prompts
+  buildCritiquePrompt,
+  buildCritiqueResolvePrompt,
+  parseCritiqueResponse,
+  parseCritiqueResolution,
+  formatCritiquesForResolution,
 } from "./prompts.js";
 import { callAgent, DEFAULT_CHAIRMAN, runAgentsInteractive } from "./agents.js";
 import { createAgentWithTier, getStepDownTier, parseAgentSpec } from "./model-config.js";
@@ -25,6 +31,9 @@ import type {
   AgentState,
   CheckpointData,
   CheckpointOptions,
+  CritiqueConfig,
+  CritiqueItem,
+  CritiqueResult,
   EnhancedPipelineConfig,
   LabelMap,
   ModelTier,
@@ -53,6 +62,8 @@ export type PipelineResult = {
   twoPassResult?: TwoPassResult;
   /** Custom Stage 2 result (when customHandler was used) */
   customStage2?: Stage2CustomResult;
+  /** Critique phase results (if critique was enabled) */
+  critiqueResult?: CritiqueResult;
 };
 
 export interface PipelineCallbacks {
@@ -929,6 +940,241 @@ export async function runTwoPassMergeChairman(
   };
 }
 
+// ============================================================================
+// Critique Phase
+// ============================================================================
+
+/**
+ * Run the critique phase with multiple reviewers.
+ *
+ * @param draft - The draft to critique
+ * @param query - Original user query
+ * @param critiqueAgents - Agents to use as critics
+ * @param critiquePrompt - Optional custom critique prompt
+ * @param timeoutMs - Optional timeout
+ * @param tty - Whether running in TTY mode
+ * @param silent - Suppress console output
+ * @returns Array of all critique items from all reviewers
+ */
+export async function runCritiquePhase(
+  draft: string,
+  query: string,
+  critiqueAgents: AgentConfig[],
+  critiquePrompt: string | undefined,
+  timeoutMs: number | undefined,
+  tty: boolean,
+  silent: boolean
+): Promise<{ critiques: CritiqueItem[]; rawResponses: Array<{ agent: string; response: string }> }> {
+  if (!silent) {
+    console.log(chalk.cyan(`\nCritique Phase: ${critiqueAgents.length} critics reviewing draft...`));
+  }
+
+  const prompt = buildCritiquePrompt(draft, query, critiquePrompt);
+
+  const states = await runAgentsInteractive(
+    "Critique Phase - Adversarial Review",
+    prompt,
+    critiqueAgents,
+    timeoutMs,
+    { tty }
+  );
+
+  const allCritiques: CritiqueItem[] = [];
+  const rawResponses: Array<{ agent: string; response: string }> = [];
+
+  for (const state of states) {
+    if (state.status === 'completed') {
+      const response = state.stdout.join('').trim();
+      rawResponses.push({ agent: state.config.name, response });
+
+      const critiques = parseCritiqueResponse(response, state.config.name);
+      allCritiques.push(...critiques);
+
+      if (!silent) {
+        const blocking = critiques.filter(c => c.category === 'blocking').length;
+        const advisory = critiques.filter(c => c.category === 'advisory').length;
+        console.log(chalk.gray(`  ${state.config.name}: ${blocking} blocking, ${advisory} advisory`));
+      }
+    } else if (!silent) {
+      console.log(chalk.yellow(`  ${state.config.name}: failed (${state.status})`));
+    }
+  }
+
+  if (!silent) {
+    const totalBlocking = allCritiques.filter(c => c.category === 'blocking').length;
+    const totalAdvisory = allCritiques.filter(c => c.category === 'advisory').length;
+    console.log(chalk.cyan(`  Total: ${totalBlocking} blocking, ${totalAdvisory} advisory critiques`));
+  }
+
+  return { critiques: allCritiques, rawResponses };
+}
+
+/**
+ * Prompt user for confirmation before applying blocking critiques.
+ *
+ * @param blockingCount - Number of blocking critiques to apply
+ * @param critiques - All critiques for detailed review
+ * @returns User's decision
+ */
+async function promptCritiqueConfirmation(
+  blockingCount: number,
+  critiques: CritiqueItem[]
+): Promise<'apply' | 'skip' | 'review'> {
+  const readline = await import('readline');
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    const blocking = critiques.filter(c => c.category === 'blocking');
+    const advisory = critiques.filter(c => c.category === 'advisory');
+
+    console.log(chalk.bold.yellow(`\n=== Critique Confirmation Required ===\n`));
+    console.log(chalk.cyan(`${blocking.length} blocking critiques will be auto-applied:`));
+    blocking.forEach((c, i) => {
+      console.log(chalk.white(`  ${i + 1}. [${c.source}] ${c.description.substring(0, 80)}${c.description.length > 80 ? '...' : ''}`));
+    });
+
+    if (advisory.length > 0) {
+      console.log(chalk.gray(`\n${advisory.length} advisory concerns logged (not auto-applied)`));
+    }
+
+    const promptText = `\nApply ${blockingCount} blocking fixes? (y/n/review): `;
+
+    rl.question(promptText, (answer) => {
+      rl.close();
+      const normalized = answer.toLowerCase().trim();
+      if (normalized === 'y' || normalized === 'yes') {
+        resolve('apply');
+      } else if (normalized === 'review' || normalized === 'r') {
+        // Show detailed review
+        console.log(chalk.bold('\n=== Detailed Critique Review ===\n'));
+        critiques.forEach((c, i) => {
+          const prefix = c.category === 'blocking' ? chalk.red('[BLOCKING]') : chalk.yellow('[ADVISORY]');
+          console.log(`${prefix} ${chalk.bold(`#${i + 1}`)} from ${chalk.cyan(c.source)}`);
+          console.log(`  Description: ${c.description}`);
+          console.log(`  Location: ${c.location}`);
+          console.log(`  Recommendation: ${c.recommendation}`);
+          console.log(`  Rationale: ${c.rationale}\n`);
+        });
+        // Re-prompt after review
+        const rl2 = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        rl2.question(`Apply ${blockingCount} blocking fixes? (y/n): `, (answer2) => {
+          rl2.close();
+          const normalized2 = answer2.toLowerCase().trim();
+          resolve(normalized2 === 'y' || normalized2 === 'yes' ? 'apply' : 'skip');
+        });
+      } else {
+        resolve('skip');
+      }
+    });
+  });
+}
+
+/**
+ * Run the critique resolution phase.
+ *
+ * @param draft - Original draft
+ * @param critiques - All critiques from reviewers
+ * @param chairman - Chairman agent for resolution
+ * @param timeoutMs - Optional timeout
+ * @param silent - Suppress console output
+ * @returns Critique result with applied/rejected critiques and revised draft
+ */
+export async function runCritiqueResolve(
+  draft: string,
+  critiques: CritiqueItem[],
+  chairman: AgentConfig,
+  timeoutMs: number | undefined,
+  silent: boolean
+): Promise<{ result: CritiqueResult; revisedDraft: string }> {
+  if (!silent) {
+    console.log(chalk.cyan(`\nResolve Phase: Chairman applying valid blocking critiques...`));
+  }
+
+  const blocking = critiques.filter(c => c.category === 'blocking');
+  const advisory = critiques.filter(c => c.category === 'advisory');
+
+  // If no blocking critiques, return draft unchanged
+  if (blocking.length === 0) {
+    if (!silent) {
+      console.log(chalk.green(`  No blocking critiques to apply. Draft unchanged.`));
+    }
+    return {
+      result: {
+        blocking: { applied: [], rejected: [] },
+        advisory: advisory.map(c => ({ ...c })),
+      },
+      revisedDraft: draft,
+    };
+  }
+
+  const formattedCritiques = formatCritiquesForResolution(critiques);
+  const resolvePrompt = buildCritiqueResolvePrompt(draft, formattedCritiques);
+
+  const state: AgentState = {
+    config: chairman,
+    status: 'pending',
+    stdout: [],
+    stderr: [],
+  };
+
+  const result = await callAgent(state, resolvePrompt, timeoutMs);
+  const responseText = result.status === 'completed'
+    ? result.stdout.join('').trim()
+    : draft; // Fallback to original on error
+
+  if (result.status !== 'completed' && !silent) {
+    console.log(chalk.yellow(`  Chairman failed (${result.status}), keeping original draft`));
+  }
+
+  const resolution = parseCritiqueResolution(responseText);
+
+  // Match applied/rejected IDs to actual critique items
+  const appliedCritiques: CritiqueItem[] = [];
+  const rejectedCritiques: CritiqueItem[] = [];
+
+  blocking.forEach((c, i) => {
+    const id = `B${i + 1}`;
+    const rejection = resolution.rejectedWithReasons.find(r => r.id === id);
+
+    if (rejection) {
+      rejectedCritiques.push({ ...c, applied: false, rejectionReason: rejection.reason });
+    } else if (resolution.appliedIds.includes(id) || resolution.appliedIds.length === 0) {
+      // If no explicit list, assume all were applied unless rejected
+      appliedCritiques.push({ ...c, applied: true });
+    } else {
+      // Not in applied list, not in rejected - assume applied by default
+      appliedCritiques.push({ ...c, applied: true });
+    }
+  });
+
+  if (!silent) {
+    console.log(chalk.green(`  Applied: ${appliedCritiques.length} blocking critiques`));
+    if (rejectedCritiques.length > 0) {
+      console.log(chalk.yellow(`  Rejected: ${rejectedCritiques.length} blocking critiques`));
+      rejectedCritiques.forEach(c => {
+        console.log(chalk.gray(`    - ${c.description.substring(0, 50)}...: ${c.rejectionReason}`));
+      });
+    }
+  }
+
+  return {
+    result: {
+      blocking: {
+        applied: appliedCritiques,
+        rejected: rejectedCritiques,
+      },
+      advisory: advisory.map(c => ({ ...c })),
+    },
+    revisedDraft: resolution.revisedDraft,
+  };
+}
+
 export function printFinal(
   stage1: Stage1Result[],
   stage2: Stage2Result[] | null,
@@ -1230,6 +1476,113 @@ export async function runEnhancedPipeline(
     // Stage 3 callback
     await callbacks?.onStage3Complete?.(stage3);
 
+    // ==========================================================================
+    // Optional Critique Phase (Merge Mode)
+    // ==========================================================================
+    let critiqueResult: CritiqueResult | undefined;
+
+    if (config.critique?.enabled && stage3) {
+      const critiqueStartMs = Date.now();
+
+      // Determine critique agents (default: reuse stage1 agents)
+      const critiqueAgents = config.critique.agents || config.stage1.agents;
+
+      // Determine critique chairman (default: reuse stage3 chairman)
+      const critiqueChairman = config.critique.chairman || config.stage3.chairman;
+
+      // Run critique phase
+      const { critiques } = await runCritiquePhase(
+        stage3.response,
+        question,
+        critiqueAgents,
+        config.critique.prompt,
+        timeoutMs,
+        tty,
+        silent
+      );
+
+      const critiqueEndMs = Date.now();
+
+      const blockingCount = critiques.filter(c => c.category === 'blocking').length;
+
+      // Handle confirmation mode
+      let userDecision: 'apply' | 'skip' | null = null;
+      let skipped = false;
+
+      if (config.critique.confirm && blockingCount > 0 && tty) {
+        const decision = await promptCritiqueConfirmation(blockingCount, critiques);
+        userDecision = decision === 'review' ? null : decision;
+
+        if (decision === 'skip') {
+          skipped = true;
+          if (!silent) {
+            console.log(chalk.yellow(`\nUser skipped critique application. Keeping original draft.`));
+          }
+          critiqueResult = {
+            blocking: { applied: [], rejected: [] },
+            advisory: critiques.filter(c => c.category === 'advisory'),
+            userConfirmation: {
+              prompted: true,
+              decision: 'skip',
+              timestamp: new Date().toISOString(),
+            },
+            timing: {
+              critiqueStartMs,
+              critiqueEndMs,
+              resolveStartMs: 0,
+              resolveEndMs: 0,
+            },
+          };
+        }
+      }
+
+      // Run resolve phase if not skipped
+      if (!skipped) {
+        const resolveStartMs = Date.now();
+
+        const { result, revisedDraft } = await runCritiqueResolve(
+          stage3.response,
+          critiques,
+          critiqueChairman,
+          timeoutMs,
+          silent
+        );
+
+        const resolveEndMs = Date.now();
+
+        // Update stage3 with revised draft
+        stage3 = {
+          agent: stage3.agent,
+          response: revisedDraft,
+        };
+
+        critiqueResult = {
+          ...result,
+          userConfirmation: config.critique.confirm ? {
+            prompted: true,
+            decision: userDecision || 'apply',
+            timestamp: new Date().toISOString(),
+          } : undefined,
+          timing: {
+            critiqueStartMs,
+            critiqueEndMs,
+            resolveStartMs,
+            resolveEndMs,
+          },
+        };
+      }
+
+      // Log advisory critiques for human review
+      if (!silent && critiqueResult && critiqueResult.advisory.length > 0) {
+        console.log(chalk.bold.yellow(`\n=== Advisory Concerns (for human review) ===`));
+        critiqueResult.advisory.forEach((c, i) => {
+          console.log(chalk.yellow(`\n${i + 1}. [${c.source}] ${c.description}`));
+          console.log(chalk.gray(`   Location: ${c.location}`));
+          console.log(chalk.gray(`   Recommendation: ${c.recommendation}`));
+        });
+      }
+    }
+
     return {
       mode: 'merge',
       stage1: stage1!,
@@ -1238,6 +1591,7 @@ export async function runEnhancedPipeline(
       aggregate: null,
       twoPassResult,
       customStage2: customStage2Result,
+      critiqueResult,
     };
 
   } else {
@@ -1353,6 +1707,113 @@ export async function runEnhancedPipeline(
   // Stage 3 callback
   await callbacks?.onStage3Complete?.(stage3);
 
+  // ==========================================================================
+  // Optional Critique Phase (Compete Mode)
+  // ==========================================================================
+  let critiqueResult: CritiqueResult | undefined;
+
+  if (config.critique?.enabled && stage3) {
+    const critiqueStartMs = Date.now();
+
+    // Determine critique agents (default: reuse stage1 agents)
+    const critiqueAgents = config.critique.agents || config.stage1.agents;
+
+    // Determine critique chairman (default: reuse stage3 chairman)
+    const critiqueChairman = config.critique.chairman || config.stage3.chairman;
+
+    // Run critique phase
+    const { critiques } = await runCritiquePhase(
+      stage3.response,
+      question,
+      critiqueAgents,
+      config.critique.prompt,
+      timeoutMs,
+      tty,
+      silent
+    );
+
+    const critiqueEndMs = Date.now();
+
+    const blockingCount = critiques.filter(c => c.category === 'blocking').length;
+
+    // Handle confirmation mode
+    let userDecision: 'apply' | 'skip' | null = null;
+    let skipped = false;
+
+    if (config.critique.confirm && blockingCount > 0 && tty) {
+      const decision = await promptCritiqueConfirmation(blockingCount, critiques);
+      userDecision = decision === 'review' ? null : decision;
+
+      if (decision === 'skip') {
+        skipped = true;
+        if (!silent) {
+          console.log(chalk.yellow(`\nUser skipped critique application. Keeping original draft.`));
+        }
+        critiqueResult = {
+          blocking: { applied: [], rejected: [] },
+          advisory: critiques.filter(c => c.category === 'advisory'),
+          userConfirmation: {
+            prompted: true,
+            decision: 'skip',
+            timestamp: new Date().toISOString(),
+          },
+          timing: {
+            critiqueStartMs,
+            critiqueEndMs,
+            resolveStartMs: 0,
+            resolveEndMs: 0,
+          },
+        };
+      }
+    }
+
+    // Run resolve phase if not skipped
+    if (!skipped) {
+      const resolveStartMs = Date.now();
+
+      const { result, revisedDraft } = await runCritiqueResolve(
+        stage3.response,
+        critiques,
+        critiqueChairman,
+        timeoutMs,
+        silent
+      );
+
+      const resolveEndMs = Date.now();
+
+      // Update stage3 with revised draft
+      stage3 = {
+        agent: stage3.agent,
+        response: revisedDraft,
+      };
+
+      critiqueResult = {
+        ...result,
+        userConfirmation: config.critique.confirm ? {
+          prompted: true,
+          decision: userDecision || 'apply',
+          timestamp: new Date().toISOString(),
+        } : undefined,
+        timing: {
+          critiqueStartMs,
+          critiqueEndMs,
+          resolveStartMs,
+          resolveEndMs,
+        },
+      };
+    }
+
+    // Log advisory critiques for human review
+    if (!silent && critiqueResult && critiqueResult.advisory.length > 0) {
+      console.log(chalk.bold.yellow(`\n=== Advisory Concerns (for human review) ===`));
+      critiqueResult.advisory.forEach((c, i) => {
+        console.log(chalk.yellow(`\n${i + 1}. [${c.source}] ${c.description}`));
+        console.log(chalk.gray(`   Location: ${c.location}`));
+        console.log(chalk.gray(`   Recommendation: ${c.recommendation}`));
+      });
+    }
+  }
+
   // Clear checkpoint on successful completion (even if chairman failed, stages are preserved)
   if (checkpoint && !isChairmanFailure(stage3.response)) {
     clearCheckpoint(checkpoint);
@@ -1368,5 +1829,6 @@ export async function runEnhancedPipeline(
     stage3,
     aggregate: aggregate!,
     twoPassResult,
+    critiqueResult,
   };
 }

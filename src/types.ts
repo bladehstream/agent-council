@@ -249,6 +249,13 @@ export type EnhancedPipelineConfig = {
      */
     twoPass?: TwoPassConfig;
   };
+
+  /**
+   * Optional adversarial critique phase configuration.
+   * When enabled, adds critique and resolve stages after draft generation.
+   * Works with both 'compete' and 'merge' modes.
+   */
+  critique?: CritiqueConfig;
 };
 
 // Checkpoint types for pipeline resumption
@@ -276,4 +283,90 @@ export type CheckpointOptions = {
    * Defaults to "council-checkpoint".
    */
   checkpointName?: string;
+};
+
+// ============================================================================
+// Critique Loop Types
+// ============================================================================
+
+/**
+ * An individual critique item raised by a critic.
+ */
+export type CritiqueItem = {
+  /** Which model raised this critique */
+  source: string;
+  /** Category of the critique */
+  category: 'blocking' | 'advisory';
+  /** What the issue is */
+  description: string;
+  /** Where in the artifact the issue is located */
+  location: string;
+  /** Specific fix or consideration */
+  recommendation: string;
+  /** Why this matters */
+  rationale: string;
+  /** Whether the blocking critique was applied (only for blocking) */
+  applied?: boolean;
+  /** Reason if a blocking critique was rejected */
+  rejectionReason?: string;
+};
+
+/**
+ * Result from the critique phase.
+ */
+export type CritiqueResult = {
+  /** Blocking critiques that auto-apply */
+  blocking: {
+    /** Critiques that were applied by chairman */
+    applied: CritiqueItem[];
+    /** Critiques that were rejected by chairman (with reasons) */
+    rejected: CritiqueItem[];
+  };
+  /** Advisory concerns logged for human review (never auto-applied) */
+  advisory: CritiqueItem[];
+  /** User confirmation details when confirm mode is used */
+  userConfirmation?: {
+    prompted: boolean;
+    decision: 'apply' | 'skip' | null;
+    timestamp: string;
+  };
+  /** Timing metrics for the critique phase */
+  timing?: {
+    critiqueStartMs: number;
+    critiqueEndMs: number;
+    resolveStartMs: number;
+    resolveEndMs: number;
+  };
+};
+
+/**
+ * Configuration for the critique phase.
+ */
+export type CritiqueConfig = {
+  /**
+   * Enable the adversarial critique loop.
+   * When true, adds critique and resolve stages after draft generation.
+   */
+  enabled: boolean;
+  /**
+   * Agents to use for critique.
+   * If not specified, reuses Stage 1 responders.
+   */
+  agents?: AgentConfig[];
+  /**
+   * Chairman for merging critiques.
+   * If not specified, reuses the existing chairman.
+   */
+  chairman?: AgentConfig;
+  /**
+   * Custom critique prompt template.
+   * Use placeholders: ${DRAFT}, ${QUERY}
+   * If not specified, uses built-in adversarial review prompt.
+   */
+  prompt?: string;
+  /**
+   * Pause for human confirmation before applying blocking critiques.
+   * Default: false
+   */
+  confirm?: boolean;
 };

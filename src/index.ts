@@ -78,6 +78,16 @@ function buildArgs() {
       default: false,
       describe: "Show path to models.json config",
     })
+    .option("critique", {
+      type: "boolean",
+      default: false,
+      describe: "Enable adversarial critique loop to improve output quality",
+    })
+    .option("confirm", {
+      type: "boolean",
+      default: false,
+      describe: "Require human confirmation before applying critique fixes",
+    })
     .help();
 }
 
@@ -203,6 +213,14 @@ async function main() {
     // Override chairman if specified
     if (argv.chairman && argv.preset) {
       pipelineConfig.stage3.chairman = createAgentFromSpec(argv.chairman);
+    }
+
+    // Add critique configuration if enabled
+    if (argv.critique) {
+      pipelineConfig.critique = {
+        enabled: true,
+        confirm: argv.confirm,
+      };
     }
 
     // If no question provided, enter REPL mode (fall back to classic mode)

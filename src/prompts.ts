@@ -894,3 +894,262 @@ deployment: Infrastructure and operations including:
 Start with ===SECTION:architecture=== now:
 `.trim();
 }
+
+// ============================================================================
+// Critique Phase Prompts
+// ============================================================================
+
+import type { CritiqueItem } from "./types.js";
+
+/**
+ * Default adversarial critique prompt.
+ * Critics should categorize findings into BLOCKING (auto-applied) and ADVISORY (logged).
+ */
+export const DEFAULT_CRITIQUE_PROMPT = `
+You are an adversarial reviewer. Your job is to find problems, not praise.
+
+Review this artifact critically and categorize your findings:
+
+## BLOCKING (will be auto-applied by chairman):
+Issues that MUST be fixed:
+- Architectural flaws that would cause implementation failure
+- Security vulnerabilities
+- Internal contradictions
+- Missing requirements that would block functionality
+- Unclear or unverifiable acceptance criteria
+
+## ADVISORY (logged for human review, not auto-applied):
+Concerns worth considering:
+- Technology choices with potential long-term trade-offs
+- Scalability or performance concerns
+- Alternative approaches worth considering
+- Maintainability suggestions
+
+## Output Format
+
+For EACH finding, output in this EXACT format:
+
+===CRITIQUE===
+CATEGORY: BLOCKING or ADVISORY
+DESCRIPTION: What the issue is
+LOCATION: Where in the artifact (section name, line reference, or "General")
+RECOMMENDATION: Specific fix or consideration
+RATIONALE: Why this matters
+===END_CRITIQUE===
+
+Be thorough. Find real issues. Do not pad with praise or minor style suggestions.
+If you find no issues in a category, state "No issues found" for that category.
+
+## Artifact to Review
+
+\${DRAFT}
+
+## Original Query (for context)
+
+\${QUERY}
+`.trim();
+
+/**
+ * Prompt for chairman to merge and resolve critiques.
+ */
+export const CRITIQUE_RESOLVE_PROMPT = `
+You are the Chairman resolving critiques from multiple reviewers.
+
+## Original Draft
+
+\${DRAFT}
+
+## Critiques from Reviewers
+
+\${CRITIQUES}
+
+## Your Task
+
+1. Review each BLOCKING critique on its own merit
+2. A single well-reasoned blocking critique should be applied even if other critics missed it
+3. Apply valid blocking fixes to the draft
+4. Reject blocking critiques that are incorrect, already addressed, or not actually blocking
+5. Do NOT apply ADVISORY critiques - they are logged for human review
+
+## Output Format
+
+First, summarize your decisions:
+
+===RESOLUTION_SUMMARY===
+APPLIED_CRITIQUES: [List critique IDs that were applied, e.g., "B1, B3, B5"]
+REJECTED_CRITIQUES: [List critique IDs rejected with brief reason, e.g., "B2: Already addressed in section 3", "B4: Not a blocking issue"]
+===END_RESOLUTION_SUMMARY===
+
+Then output the revised draft:
+
+===REVISED_DRAFT===
+[Your complete revised draft with blocking fixes applied]
+===END_REVISED_DRAFT===
+`.trim();
+
+/**
+ * Build the critique prompt for reviewers.
+ *
+ * @param draft - The draft artifact to critique
+ * @param query - The original user query
+ * @param customPrompt - Optional custom critique prompt template
+ * @returns The critique prompt
+ */
+export function buildCritiquePrompt(
+  draft: string,
+  query: string,
+  customPrompt?: string
+): string {
+  const template = customPrompt || DEFAULT_CRITIQUE_PROMPT;
+  return template
+    .replace(/\$\{DRAFT\}/g, draft)
+    .replace(/\$\{QUERY\}/g, query);
+}
+
+/**
+ * Build the critique resolution prompt for chairman.
+ *
+ * @param draft - The original draft
+ * @param critiques - Formatted critiques from all reviewers
+ * @returns The resolution prompt
+ */
+export function buildCritiqueResolvePrompt(
+  draft: string,
+  critiques: string
+): string {
+  return CRITIQUE_RESOLVE_PROMPT
+    .replace(/\$\{DRAFT\}/g, draft)
+    .replace(/\$\{CRITIQUES\}/g, critiques);
+}
+
+/**
+ * Parse critique items from a reviewer's response.
+ *
+ * @param response - Raw response from a critique agent
+ * @param source - Agent name (for attribution)
+ * @returns Array of parsed critique items
+ */
+export function parseCritiqueResponse(response: string, source: string): CritiqueItem[] {
+  const items: CritiqueItem[] = [];
+  const pattern = /===CRITIQUE===([\s\S]*?)===END_CRITIQUE===/g;
+
+  let match;
+  while ((match = pattern.exec(response)) !== null) {
+    const content = match[1].trim();
+
+    const categoryMatch = content.match(/CATEGORY:\s*(BLOCKING|ADVISORY)/i);
+    const descMatch = content.match(/DESCRIPTION:\s*([^\n]+(?:\n(?!LOCATION:|RECOMMENDATION:|RATIONALE:)[^\n]+)*)/i);
+    const locMatch = content.match(/LOCATION:\s*([^\n]+)/i);
+    const recMatch = content.match(/RECOMMENDATION:\s*([^\n]+(?:\n(?!RATIONALE:)[^\n]+)*)/i);
+    const ratMatch = content.match(/RATIONALE:\s*([^\n]+(?:\n(?!===)[^\n]+)*)/i);
+
+    if (categoryMatch) {
+      items.push({
+        source,
+        category: categoryMatch[1].toLowerCase() as 'blocking' | 'advisory',
+        description: descMatch?.[1]?.trim() || 'No description provided',
+        location: locMatch?.[1]?.trim() || 'Not specified',
+        recommendation: recMatch?.[1]?.trim() || 'No recommendation provided',
+        rationale: ratMatch?.[1]?.trim() || 'No rationale provided',
+      });
+    }
+  }
+
+  return items;
+}
+
+/**
+ * Parse the chairman's resolution response.
+ *
+ * @param response - Raw response from resolution chairman
+ * @returns Parsed resolution with applied/rejected lists and revised draft
+ */
+export function parseCritiqueResolution(response: string): {
+  appliedIds: string[];
+  rejectedWithReasons: Array<{ id: string; reason: string }>;
+  revisedDraft: string;
+} {
+  // Parse resolution summary
+  const summaryMatch = response.match(
+    /===RESOLUTION_SUMMARY===([\s\S]*?)===END_RESOLUTION_SUMMARY===/
+  );
+
+  let appliedIds: string[] = [];
+  let rejectedWithReasons: Array<{ id: string; reason: string }> = [];
+
+  if (summaryMatch) {
+    const summary = summaryMatch[1];
+
+    // Parse applied critiques
+    const appliedMatch = summary.match(/APPLIED_CRITIQUES:\s*\[([^\]]*)\]/i);
+    if (appliedMatch && appliedMatch[1].trim()) {
+      appliedIds = appliedMatch[1].split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    // Parse rejected critiques with reasons
+    const rejectedMatch = summary.match(/REJECTED_CRITIQUES:\s*\[([^\]]*)\]/i);
+    if (rejectedMatch && rejectedMatch[1].trim()) {
+      const rejectedParts = rejectedMatch[1].split(',').map(s => s.trim()).filter(Boolean);
+      for (const part of rejectedParts) {
+        const colonIdx = part.indexOf(':');
+        if (colonIdx > -1) {
+          rejectedWithReasons.push({
+            id: part.substring(0, colonIdx).trim(),
+            reason: part.substring(colonIdx + 1).trim(),
+          });
+        } else {
+          rejectedWithReasons.push({ id: part, reason: 'No reason provided' });
+        }
+      }
+    }
+  }
+
+  // Parse revised draft
+  const draftMatch = response.match(
+    /===REVISED_DRAFT===([\s\S]*?)===END_REVISED_DRAFT===/
+  );
+  const revisedDraft = draftMatch?.[1]?.trim() || response;
+
+  return { appliedIds, rejectedWithReasons, revisedDraft };
+}
+
+/**
+ * Format critiques for the resolution prompt.
+ *
+ * @param critiques - All critique items from reviewers
+ * @returns Formatted string for resolution prompt
+ */
+export function formatCritiquesForResolution(critiques: CritiqueItem[]): string {
+  const blocking = critiques.filter(c => c.category === 'blocking');
+  const advisory = critiques.filter(c => c.category === 'advisory');
+
+  let output = '## BLOCKING CRITIQUES\n\n';
+
+  if (blocking.length === 0) {
+    output += 'No blocking critiques raised.\n\n';
+  } else {
+    blocking.forEach((c, i) => {
+      output += `### B${i + 1} (from ${c.source})\n`;
+      output += `- **Description:** ${c.description}\n`;
+      output += `- **Location:** ${c.location}\n`;
+      output += `- **Recommendation:** ${c.recommendation}\n`;
+      output += `- **Rationale:** ${c.rationale}\n\n`;
+    });
+  }
+
+  output += '## ADVISORY CRITIQUES (for human review only)\n\n';
+
+  if (advisory.length === 0) {
+    output += 'No advisory critiques raised.\n\n';
+  } else {
+    advisory.forEach((c, i) => {
+      output += `### A${i + 1} (from ${c.source})\n`;
+      output += `- **Description:** ${c.description}\n`;
+      output += `- **Location:** ${c.location}\n`;
+      output += `- **Recommendation:** ${c.recommendation}\n`;
+      output += `- **Rationale:** ${c.rationale}\n\n`;
+    });
+  }
+
+  return output;
+}

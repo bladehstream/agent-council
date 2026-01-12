@@ -20,6 +20,9 @@ export {
   // Merge mode
   runMergeChairman,
   runTwoPassMergeChairman,
+  // Critique phase
+  runCritiquePhase,
+  runCritiqueResolve,
   // Checkpoint functions
   saveCheckpoint,
   loadCheckpoint,
@@ -96,6 +99,14 @@ export {
   // Custom prompt support
   PROMPT_PLACEHOLDERS,
   applyPromptPlaceholders,
+  // Critique phase prompts
+  DEFAULT_CRITIQUE_PROMPT,
+  CRITIQUE_RESOLVE_PROMPT,
+  buildCritiquePrompt,
+  buildCritiqueResolvePrompt,
+  parseCritiqueResponse,
+  parseCritiqueResolution,
+  formatCritiquesForResolution,
   type ChairmanPromptOptions,
   type Pass2PromptOptions,
 } from './prompts.js';
@@ -126,4 +137,8 @@ export type {
   // Custom Stage 2 types
   Stage2CustomResult,
   Stage2CustomHandler,
+  // Critique types
+  CritiqueItem,
+  CritiqueResult,
+  CritiqueConfig,
 } from './types.js';
