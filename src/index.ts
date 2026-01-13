@@ -174,7 +174,9 @@ async function main() {
     console.log(chalk.yellow(`Warning: Only ${availableProviders.length} provider available. Council works best with multiple agents.\n`));
   }
 
-  const useTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  // If user explicitly requests --confirm, trust they want interactive prompts
+  // even if stdin/stdout aren't detected as TTYs (e.g., running through Claude Code)
+  const useTty = argv.confirm ? true : Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
   // Determine if using enhanced mode (preset or stage flags)
   const useEnhanced = argv.preset || argv.respond || argv.evaluate;
